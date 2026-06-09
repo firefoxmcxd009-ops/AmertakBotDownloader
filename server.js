@@ -921,7 +921,6 @@ bot.onText(
 ⚑ Owner: [Thavrath Amertak](@Amertak_Network)`, {
         parse_mode: "Markdown"
       }, BUTTONS
-
     );
   }
 );
