@@ -1199,13 +1199,18 @@ function extractYtId(url) {
   return match ? match[1] : null;
 }
 
-// Download stream URL to file
+// Download stream URL to file — follows redirects properly
 async function downloadStreamToFile(streamUrl, destPath, extraHeaders) {
   extraHeaders = extraHeaders || {};
   const response = await axios.get(streamUrl, {
     responseType: "stream",
     timeout: 1000 * 60 * 8,
-    headers: Object.assign({ "User-Agent": "Mozilla/5.0" }, extraHeaders)
+    maxRedirects: 10,
+    headers: Object.assign({
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "*/*",
+      "Referer": "https://rapidapi.com/"
+    }, extraHeaders)
   });
   return new Promise(function(resolve, reject) {
     const writer = fs.createWriteStream(destPath);
