@@ -918,7 +918,7 @@ bot.onText(
 ✦ Send link to bot
 ✦ Choose format
 
-⚑ Owner: [Thavrath Amertak](@Amertak_Network)`, {
+⚑ Owner: [Thavrath Amertak](https://t.me/Amertak_Network)`, {
         parse_mode: "Markdown"
       }, BUTTONS
     );
