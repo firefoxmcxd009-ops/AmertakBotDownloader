@@ -908,10 +908,10 @@ bot.onText(
 
 ✱ Supported Platforms
 
-✦ YouTube
-✦ TikTok
-✦ Pinterest
-✦ Spotify
+✦ [YouTube](youtube.com)
+✦ [TikTok](tiktok.com)
+✦ [Pinterest](pinterest.com)
+✦ [Spotify](spotify.com)
 
 ✱ How to use
 
