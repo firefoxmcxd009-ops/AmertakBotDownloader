@@ -894,9 +894,7 @@ bot.onText(
   /\/start/,
 
   async (msg) => {
-    const userid = msg.from.id;
     bot.sendMessage(
-
       msg.chat.id,
 
 `⚑ *សូមស្វាគមន៏មកកាន់ Amertak Bot Downloader*
