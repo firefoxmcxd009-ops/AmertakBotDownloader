@@ -1185,7 +1185,49 @@ bot.on(
 
 /*
 ========================================
-YOUTUBE VIDEO (FIXED)
+COBALT HELPER — bypass YouTube IP block, no cookies needed
+========================================
+*/
+
+async function cobaltGetUrl(url, mode, videoQuality) {
+  videoQuality = videoQuality || "720";
+  const payload = {
+    url: url,
+    downloadMode: mode,
+    videoQuality: videoQuality,
+    audioFormat: "mp3",
+    audioBitrate: "192",
+    filenameStyle: "basic",
+    disableMetadata: false
+  };
+  const resp = await axios.post("https://api.cobalt.tools/", payload, {
+    headers: { "Accept": "application/json", "Content-Type": "application/json" },
+    timeout: 30000
+  });
+  const data = resp.data;
+  if (data.status === "error") throw new Error(data.error && data.error.code ? data.error.code : "cobalt error");
+  if (data.status === "tunnel" || data.status === "redirect") return data.url;
+  if (data.status === "picker" && data.picker && data.picker.length) return data.picker[0].url;
+  throw new Error("No download URL from cobalt");
+}
+
+async function cobaltDownloadToFile(streamUrl, destPath) {
+  const response = await axios.get(streamUrl, {
+    responseType: "stream",
+    timeout: 1000 * 60 * 8,
+    headers: { "User-Agent": "Mozilla/5.0" }
+  });
+  return new Promise(function(resolve, reject) {
+    const writer = fs.createWriteStream(destPath);
+    response.data.pipe(writer);
+    writer.on("finish", resolve);
+    writer.on("error", reject);
+  });
+}
+
+/*
+========================================
+YOUTUBE VIDEO — via cobalt.tools (no cookies needed)
 ========================================
 */
 
@@ -1193,120 +1235,59 @@ async function downloadYouTubeVideo(chatId, url, userId, username) {
 
   const wait = await bot.sendMessage(chatId, "⏳ Downloading video...");
 
-  const filePrefix = Date.now().toString();
-  const outputTemplate = path.join(DOWNLOAD_DIR, `${filePrefix}.%(ext)s`);
-  const expectedMp4 = path.join(DOWNLOAD_DIR, `${filePrefix}.mp4`);
-  const expectedWebm = path.join(DOWNLOAD_DIR, `${filePrefix}.webm`);
-  const expectedMkv = path.join(DOWNLOAD_DIR, `${filePrefix}.mkv`);
+  try {
 
-  // Use android player client to bypass YouTube bot-detection (HTTP 429 / sign-in wall)
-  const args = [
-    "--no-playlist",
-    "--restrict-filenames",
-    "--socket-timeout", "60",
-    "--retries", "10",
-    "--fragment-retries", "10",
-    "--no-check-certificates",
-    "--extractor-args", "youtube:player_client=android,web",
-    ...(HAS_COOKIES ? ["--cookies", COOKIES_PATH] : []),
-    "-f", "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]/best",
-    "--merge-output-format", "mp4",
-    "-o", outputTemplate,
-    url
-  ];
+    const streamUrl = await cobaltGetUrl(url, "auto", "720");
+    const filePrefix = Date.now().toString();
+    const outputFile = path.join(DOWNLOAD_DIR, filePrefix + ".mp4");
 
-  execFile(
+    await cobaltDownloadToFile(streamUrl, outputFile);
 
-    YTDLP_PATH,
-    args,
-    {
-      timeout: 1000 * 60 * 8,
-      maxBuffer: 1024 * 1024 * 50
-    },
+    const stat = fs.statSync(outputFile);
 
-    async (err, stdout, stderr) => {
+    if (stat.size > 49 * 1024 * 1024) {
 
-      console.log("[YT_MP4 stdout]", stdout);
-      console.log("[YT_MP4 stderr]", stderr);
+      addHistory(userId, username, {
+        platform: "youtube", format: "mp4", url, status: "fail"
+      });
 
-      // Find output file (might be .mp4 .webm .mkv)
-      let outputFile = null;
-      for (const candidate of [expectedMp4, expectedWebm, expectedMkv]) {
-        if (fs.existsSync(candidate)) { outputFile = candidate; break; }
-      }
+      await bot.sendMessage(chatId, "✘ Video too large (>50MB). Try a shorter video.");
 
-      // Also try glob for any file matching prefix
-      if (!outputFile) {
-        try {
-          const files = fs.readdirSync(DOWNLOAD_DIR).filter(f => f.startsWith(filePrefix));
-          if (files.length) outputFile = path.join(DOWNLOAD_DIR, files[0]);
-        } catch {}
-      }
+    } else {
 
-      if (err || !outputFile) {
+      await bot.sendVideo(
+        chatId,
+        outputFile,
+        { caption: "✓ YouTube Video", supports_streaming: true }
+      );
 
-        console.log("[YT_MP4 err]", err);
-
-        addHistory(userId, username, {
-          platform: "youtube", format: "mp4", url, status: "fail"
-        });
-
-        await bot.sendMessage(chatId, "✘ Video download failed. YouTube may require cookies or the video is unavailable.");
-
-        bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-        return;
-
-      }
-
-      try {
-
-        const stat = fs.statSync(outputFile);
-
-        if (stat.size > 49 * 1024 * 1024) {
-
-          addHistory(userId, username, {
-            platform: "youtube", format: "mp4", url, status: "fail"
-          });
-
-          await bot.sendMessage(chatId, "✘ Video too large (>50MB). Try a shorter video.");
-
-        } else {
-
-          await bot.sendVideo(
-            chatId,
-            outputFile,
-            { caption: "✓ YouTube Video", supports_streaming: true }
-          );
-
-          addHistory(userId, username, {
-            platform: "youtube", format: "mp4", url, status: "ok"
-          });
-
-        }
-
-      } catch (e) {
-
-        console.log(e);
-
-        addHistory(userId, username, {
-          platform: "youtube", format: "mp4", url, status: "fail"
-        });
-
-        await bot.sendMessage(chatId, "✘ Upload failed");
-
-      }
-
-      try { fs.unlinkSync(outputFile); } catch {}
-      bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+      addHistory(userId, username, {
+        platform: "youtube", format: "mp4", url, status: "ok"
+      });
 
     }
-  );
+
+    try { fs.unlinkSync(outputFile); } catch {}
+
+  } catch (err) {
+
+    console.log("[YT_MP4 err]", err.message || err);
+
+    addHistory(userId, username, {
+      platform: "youtube", format: "mp4", url, status: "fail"
+    });
+
+    await bot.sendMessage(chatId, "✘ Video download failed.");
+
+  }
+
+  bot.deleteMessage(chatId, wait.message_id).catch(() => {});
 
 }
 
 /*
 ========================================
-YOUTUBE AUDIO (FIXED)
+YOUTUBE AUDIO — via cobalt.tools (no cookies needed)
 ========================================
 */
 
@@ -1314,105 +1295,53 @@ async function downloadYouTubeAudio(chatId, url, userId, username) {
 
   const wait = await bot.sendMessage(chatId, "⏳ Downloading audio...");
 
-  const filePrefix = Date.now().toString();
-  const outputTemplate = path.join(DOWNLOAD_DIR, `${filePrefix}.%(ext)s`);
+  try {
 
-  const args = [
-    "--no-playlist",
-    "--restrict-filenames",
-    "--socket-timeout", "60",
-    "--retries", "10",
-    "--fragment-retries", "10",
-    "--no-check-certificates",
-    "--extractor-args", "youtube:player_client=android,web",
-    ...(HAS_COOKIES ? ["--cookies", COOKIES_PATH] : []),
-    "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
-    "--extract-audio",
-    "--audio-format", "mp3",
-    "--audio-quality", "192K",
-    "-o", outputTemplate,
-    url
-  ];
+    const streamUrl = await cobaltGetUrl(url, "audio");
+    const filePrefix = Date.now().toString();
+    const outputFile = path.join(DOWNLOAD_DIR, filePrefix + ".mp3");
 
-  execFile(
+    await cobaltDownloadToFile(streamUrl, outputFile);
 
-    YTDLP_PATH,
-    args,
-    {
-      timeout: 1000 * 60 * 8,
-      maxBuffer: 1024 * 1024 * 50
-    },
+    const stat = fs.statSync(outputFile);
 
-    async (err, stdout, stderr) => {
+    if (stat.size > 49 * 1024 * 1024) {
 
-      console.log("[YT_MP3 stdout]", stdout);
-      console.log("[YT_MP3 stderr]", stderr);
+      addHistory(userId, username, {
+        platform: "youtube", format: "mp3", url, status: "fail"
+      });
 
-      // Find output
-      let outputFile = null;
-      try {
-        const files = fs.readdirSync(DOWNLOAD_DIR).filter(f => f.startsWith(filePrefix));
-        if (files.length) outputFile = path.join(DOWNLOAD_DIR, files[0]);
-      } catch {}
+      await bot.sendMessage(chatId, "✘ Audio too large (>50MB)");
 
-      if (err || !outputFile) {
+    } else {
 
-        console.log("[YT_MP3 err]", err);
+      await bot.sendAudio(
+        chatId,
+        outputFile,
+        { caption: "✓ YouTube Audio" }
+      );
 
-        addHistory(userId, username, {
-          platform: "youtube", format: "mp3", url, status: "fail"
-        });
-
-        await bot.sendMessage(chatId, "✘ Audio download failed.");
-
-        bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-        return;
-
-      }
-
-      try {
-
-        const stat = fs.statSync(outputFile);
-
-        if (stat.size > 49 * 1024 * 1024) {
-
-          addHistory(userId, username, {
-            platform: "youtube", format: "mp3", url, status: "fail"
-          });
-
-          await bot.sendMessage(chatId, "✘ Audio too large (>50MB)");
-
-        } else {
-
-          await bot.sendAudio(
-            chatId,
-            outputFile,
-            { caption: "✓ YouTube Audio" }
-          );
-
-          addHistory(userId, username, {
-            platform: "youtube", format: "mp3", url, status: "ok"
-          });
-
-        }
-
-      } catch (e) {
-
-        console.log(e);
-
-        addHistory(userId, username, {
-          platform: "youtube", format: "mp3", url, status: "fail"
-        });
-
-        await bot.sendMessage(chatId, "✘ Upload failed");
-
-      }
-
-      try { fs.unlinkSync(outputFile); } catch {}
-      bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+      addHistory(userId, username, {
+        platform: "youtube", format: "mp3", url, status: "ok"
+      });
 
     }
-  );
+
+    try { fs.unlinkSync(outputFile); } catch {}
+
+  } catch (err) {
+
+    console.log("[YT_MP3 err]", err.message || err);
+
+    addHistory(userId, username, {
+      platform: "youtube", format: "mp3", url, status: "fail"
+    });
+
+    await bot.sendMessage(chatId, "✘ Audio download failed.");
+
+  }
+
+  bot.deleteMessage(chatId, wait.message_id).catch(() => {});
 
 }
 
