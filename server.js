@@ -706,6 +706,20 @@ YT-DLP CHECK
 
 let YTDLP_PATH = "yt-dlp";
 
+/*
+========================================
+COOKIES PATH — upload cookies.txt to project root
+Set env var COOKIES_PATH or place file at ./cookies.txt
+========================================
+*/
+const COOKIES_PATH = process.env.COOKIES_PATH || path.join(__dirname, "cookies.txt");
+const HAS_COOKIES = fs.existsSync(COOKIES_PATH);
+if (HAS_COOKIES) {
+  console.log("✅ YouTube cookies.txt found:", COOKIES_PATH);
+} else {
+  console.log("⚠️  No cookies.txt found — YouTube may fail on Render");
+}
+
 async function ensureYtDlp() {
 
   return new Promise((resolve) => {
@@ -1194,6 +1208,7 @@ async function downloadYouTubeVideo(chatId, url, userId, username) {
     "--fragment-retries", "10",
     "--no-check-certificates",
     "--extractor-args", "youtube:player_client=android,web",
+    ...(HAS_COOKIES ? ["--cookies", COOKIES_PATH] : []),
     "-f", "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]/best",
     "--merge-output-format", "mp4",
     "-o", outputTemplate,
@@ -1310,6 +1325,7 @@ async function downloadYouTubeAudio(chatId, url, userId, username) {
     "--fragment-retries", "10",
     "--no-check-certificates",
     "--extractor-args", "youtube:player_client=android,web",
+    ...(HAS_COOKIES ? ["--cookies", COOKIES_PATH] : []),
     "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
     "--extract-audio",
     "--audio-format", "mp3",
@@ -1410,9 +1426,19 @@ async function downloadYouTubeThumbnail(chatId, url, userId, username) {
 
   const wait = await bot.sendMessage(chatId, "⏳ Fetching thumbnail...");
 
-  exec(
+  const thumbArgs = [
+    "--get-thumbnail",
+    "--no-playlist",
+    "--extractor-args", "youtube:player_client=android,web",
+    ...(HAS_COOKIES ? ["--cookies", COOKIES_PATH] : []),
+    url
+  ];
 
-    `${YTDLP_PATH} --get-thumbnail "${url}"`,
+  execFile(
+
+    YTDLP_PATH,
+    thumbArgs,
+    { timeout: 30000 },
 
     async (err, stdout) => {
 
@@ -1674,6 +1700,7 @@ async function spotifyInfo(chatId, url, userId, username) {
       "--fragment-retries", "10",
       "--no-check-certificates",
       "--extractor-args", "youtube:player_client=android,web",
+      ...(HAS_COOKIES ? ["--cookies", COOKIES_PATH] : []),
       "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
       "--extract-audio",
       "--audio-format", "mp3",
