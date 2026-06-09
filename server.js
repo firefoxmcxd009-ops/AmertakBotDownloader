@@ -877,7 +877,7 @@ const BUTTONS = {
       },
       {
         text: "Dashboard", web_app: {
-          url: `${BASE_URL}/dashboard?uid=${uid}`
+          url: `${BASE_URL}/dashboard?uid=${userid}`
         }
       }
     ]]
@@ -894,7 +894,7 @@ bot.onText(
   /\/start/,
 
   async (msg) => {
-    const uid = msg.from.id;
+    const userid = msg.from.id;
     bot.sendMessage(
 
       msg.chat.id,
