@@ -3,9 +3,50 @@ require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
-const { execFile, spawnSync } = require("child_process");
+const { exec, execFile } = require("child_process");
 const TelegramBot = require("node-telegram-bot-api");
 const express = require("express");
+
+/*
+========================================
+HISTORY STORE
+========================================
+*/
+
+const HISTORY_FILE = path.join(__dirname, "history.json");
+
+function loadHistory() {
+  try {
+    if (fs.existsSync(HISTORY_FILE)) {
+      return JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8"));
+    }
+  } catch {}
+  return {};
+}
+
+function saveHistory(history) {
+  try {
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
+  } catch {}
+}
+
+function addHistory(userId, username, entry) {
+  const history = loadHistory();
+  if (!history[userId]) {
+    history[userId] = { username: username || "Unknown", records: [] };
+  }
+  history[userId].username = username || history[userId].username;
+  history[userId].records.unshift({
+    ...entry,
+    id: Date.now().toString(),
+    date: new Date().toISOString()
+  });
+  // Keep max 100 per user
+  if (history[userId].records.length > 100) {
+    history[userId].records = history[userId].records.slice(0, 100);
+  }
+  saveHistory(history);
+}
 
 /*
 ========================================
@@ -14,9 +55,606 @@ EXPRESS SERVER
 */
 
 const app = express();
+app.use(express.json());
+
+/*
+========================================
+DASHBOARD HTML
+========================================
+*/
+
+const DASHBOARD_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Amertak Bot Dashboard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --card: #16161f;
+    --border: #1e1e2e;
+    --accent: #7c6af7;
+    --accent2: #a78bfa;
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --cyan: #22d3ee;
+    --text: #e2e2f0;
+    --muted: #6b6b8a;
+    --mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+  }
+
+  /* NAV */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10,10,15,0.92);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .nav-logo {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--accent2);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .nav-logo .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* MAIN */
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 20px; }
+
+  /* LOGIN */
+  #login-view {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: calc(100vh - 56px);
+    gap: 24px;
+    text-align: center;
+  }
+  .login-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px 32px;
+    width: 100%;
+    max-width: 400px;
+  }
+  .login-icon {
+    font-size: 40px;
+    margin-bottom: 16px;
+  }
+  .login-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .login-sub {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 28px;
+  }
+  input[type="text"] {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 14px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+    margin-bottom: 12px;
+  }
+  input[type="text"]:focus { border-color: var(--accent); }
+  input[type="text"]::placeholder { color: var(--muted); }
+
+  button.btn {
+    width: 100%;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    padding: 11px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, opacity 0.2s;
+  }
+  button.btn:hover { background: var(--accent2); }
+  button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .error-msg {
+    font-size: 12px;
+    color: var(--red);
+    margin-top: 8px;
+    display: none;
+  }
+
+  /* DASHBOARD */
+  #dashboard-view { display: none; }
+
+  .user-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .user-info { display: flex; align-items: center; gap: 12px; }
+  .avatar {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--cyan));
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 17px; color: #fff;
+    flex-shrink: 0;
+  }
+  .user-name { font-size: 16px; font-weight: 600; }
+  .user-id { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+
+  .btn-sm {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 14px;
+    color: var(--muted);
+    font-size: 13px;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+    white-space: nowrap;
+  }
+  .btn-sm:hover { color: var(--text); border-color: var(--accent); }
+
+  /* STATS */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 6px;
+  }
+  .stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    font-family: var(--mono);
+  }
+  .stat-value.green { color: var(--green); }
+  .stat-value.purple { color: var(--accent2); }
+  .stat-value.cyan { color: var(--cyan); }
+  .stat-value.yellow { color: var(--yellow); }
+
+  /* FILTER BAR */
+  .filter-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .filter-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 5px 14px;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .filter-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .filter-btn:hover:not(.active) { border-color: var(--accent); color: var(--text); }
+
+  /* HISTORY LIST */
+  .history-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .history-item {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    transition: border-color 0.15s;
+  }
+  .history-item:hover { border-color: #2e2e42; }
+
+  .platform-icon {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px;
+    flex-shrink: 0;
+  }
+  .pi-yt { background: rgba(255,0,0,0.12); }
+  .pi-tt { background: rgba(0,0,0,0.4); border: 1px solid #333; }
+  .pi-sp { background: rgba(30,215,96,0.12); }
+  .pi-pin { background: rgba(230,0,35,0.12); }
+
+  .history-info { flex: 1; min-width: 0; }
+  .history-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 3px;
+  }
+  .history-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .tag {
+    font-size: 10px;
+    font-family: var(--mono);
+    padding: 2px 7px;
+    border-radius: 4px;
+    border: 1px solid;
+  }
+  .tag-mp4 { color: var(--cyan); border-color: rgba(34,211,238,0.3); background: rgba(34,211,238,0.07); }
+  .tag-mp3 { color: var(--green); border-color: rgba(52,211,153,0.3); background: rgba(52,211,153,0.07); }
+  .tag-img { color: var(--yellow); border-color: rgba(251,191,36,0.3); background: rgba(251,191,36,0.07); }
+  .tag-audio { color: var(--accent2); border-color: rgba(167,139,250,0.3); background: rgba(167,139,250,0.07); }
+
+  .history-date {
+    font-size: 11px;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-ok { background: var(--green); }
+  .status-fail { background: var(--red); }
+
+  .redownload-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--accent2);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s;
+    text-decoration: none;
+    display: inline-block;
+  }
+  .redownload-btn:hover {
+    border-color: var(--accent);
+    background: rgba(124,106,247,0.1);
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-text { font-size: 14px; }
+
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 14px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* Loading */
+  .spinner {
+    display: inline-block;
+    width: 18px; height: 18px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin: auto;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-row {
+    display: flex;
+    justify-content: center;
+    padding: 40px;
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-logo">
+    <span class="dot"></span>
+    Amertak Bot
+  </div>
+  <span style="font-size:12px;color:var(--muted);">Download Dashboard</span>
+</nav>
+
+<!-- LOGIN -->
+<div id="login-view">
+  <div class="login-box">
+    <div class="login-icon">⚑</div>
+    <div class="login-title">Sign in to Dashboard</div>
+    <div class="login-sub">Enter your Telegram User ID to view your download history</div>
+    <input type="text" id="uid-input" placeholder="Your Telegram User ID" />
+    <div class="error-msg" id="login-error">User ID not found or no downloads yet</div>
+    <button class="btn" id="login-btn" onclick="doLogin()">View History</button>
+    <p style="margin-top:16px;font-size:11px;color:var(--muted);">
+      Get your ID: message <a href="https://t.me/userinfobot" style="color:var(--accent2);">@userinfobot</a> on Telegram
+    </p>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard-view">
+  <div class="container">
+
+    <div class="user-header">
+      <div class="user-info">
+        <div class="avatar" id="user-avatar">?</div>
+        <div>
+          <div class="user-name" id="user-name">—</div>
+          <div class="user-id" id="user-id-label">ID: —</div>
+        </div>
+      </div>
+      <button class="btn-sm" onclick="doLogout()">← Sign out</button>
+    </div>
+
+    <!-- STATS -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Total Downloads</div>
+        <div class="stat-value purple" id="stat-total">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">YouTube</div>
+        <div class="stat-value green" id="stat-yt">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">TikTok</div>
+        <div class="stat-value cyan" id="stat-tt">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Other</div>
+        <div class="stat-value yellow" id="stat-other">0</div>
+      </div>
+    </div>
+
+    <!-- FILTER -->
+    <div class="filter-bar">
+      <button class="filter-btn active" onclick="setFilter('all', this)">All</button>
+      <button class="filter-btn" onclick="setFilter('youtube', this)">YouTube</button>
+      <button class="filter-btn" onclick="setFilter('tiktok', this)">TikTok</button>
+      <button class="filter-btn" onclick="setFilter('spotify', this)">Spotify</button>
+      <button class="filter-btn" onclick="setFilter('pinterest', this)">Pinterest</button>
+    </div>
+
+    <div class="section-title">Download History</div>
+    <div class="history-list" id="history-list">
+      <div class="loading-row"><div class="spinner"></div></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let allRecords = [];
+let currentFilter = 'all';
+
+// Auto-login if ?uid= is in the URL
+(function autoLogin() {
+  const params = new URLSearchParams(window.location.search);
+  const uid = params.get('uid');
+  if (uid) {
+    document.getElementById('uid-input').value = uid;
+    // Slight delay so DOM is ready
+    setTimeout(() => doLogin(), 100);
+  }
+})();
+
+function doLogin() {
+  const uid = document.getElementById('uid-input').value.trim();
+  if (!uid) return;
+  const btn = document.getElementById('login-btn');
+  btn.disabled = true;
+  btn.textContent = 'Loading...';
+  fetch('/api/history/' + uid)
+    .then(r => r.json())
+    .then(data => {
+      if (!data || data.error) {
+        document.getElementById('login-error').style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'View History';
+        return;
+      }
+      showDashboard(uid, data);
+    })
+    .catch(() => {
+      document.getElementById('login-error').style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'View History';
+    });
+}
+
+document.getElementById('uid-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+function showDashboard(uid, data) {
+  document.getElementById('login-view').style.display = 'none';
+  const dash = document.getElementById('dashboard-view');
+  dash.style.display = 'block';
+
+  const uname = data.username || 'User';
+  document.getElementById('user-avatar').textContent = uname.charAt(0).toUpperCase();
+  document.getElementById('user-name').textContent = uname;
+  document.getElementById('user-id-label').textContent = 'ID: ' + uid;
+
+  allRecords = data.records || [];
+
+  // Stats
+  const yt = allRecords.filter(r => r.platform === 'youtube').length;
+  const tt = allRecords.filter(r => r.platform === 'tiktok').length;
+  const other = allRecords.length - yt - tt;
+  document.getElementById('stat-total').textContent = allRecords.length;
+  document.getElementById('stat-yt').textContent = yt;
+  document.getElementById('stat-tt').textContent = tt;
+  document.getElementById('stat-other').textContent = other;
+
+  renderList();
+}
+
+function doLogout() {
+  document.getElementById('dashboard-view').style.display = 'none';
+  document.getElementById('login-view').style.display = 'flex';
+  document.getElementById('uid-input').value = '';
+  document.getElementById('login-error').style.display = 'none';
+  const btn = document.getElementById('login-btn');
+  btn.disabled = false;
+  btn.textContent = 'View History';
+}
+
+function setFilter(f, el) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  renderList();
+}
+
+function renderList() {
+  const list = document.getElementById('history-list');
+  let records = allRecords;
+  if (currentFilter !== 'all') {
+    records = records.filter(r => r.platform === currentFilter);
+  }
+  if (!records.length) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-text">No downloads found</div></div>';
+    return;
+  }
+  list.innerHTML = records.map(r => itemHTML(r)).join('');
+}
+
+const PLATFORM_ICON = {
+  youtube: { cls: 'pi-yt', icon: '▶' },
+  tiktok: { cls: 'pi-tt', icon: '♪' },
+  spotify: { cls: 'pi-sp', icon: '♫' },
+  pinterest: { cls: 'pi-pin', icon: '⊕' },
+};
+
+const FORMAT_TAG = {
+  mp4: 'tag-mp4', mp3: 'tag-mp3', audio: 'tag-audio',
+  image: 'tag-img', thumbnail: 'tag-img',
+};
+
+function itemHTML(r) {
+  const pi = PLATFORM_ICON[r.platform] || { cls: 'pi-tt', icon: '↓' };
+  const tagCls = FORMAT_TAG[r.format] || 'tag-mp4';
+  const date = new Date(r.date);
+  const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    + ' ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const shortUrl = r.url ? (r.url.length > 45 ? r.url.slice(0, 45) + '…' : r.url) : 'Unknown URL';
+  const status = r.status === 'ok' ? 'status-ok' : 'status-fail';
+
+  return \`<div class="history-item">
+    <div class="platform-icon \${pi.cls}">\${pi.icon}</div>
+    <div class="history-info">
+      <div class="history-title" title="\${r.url || ''}">\${shortUrl}</div>
+      <div class="history-meta">
+        <span class="tag \${tagCls}">\${(r.format || 'file').toUpperCase()}</span>
+        <span class="history-date">\${dateStr}</span>
+      </div>
+    </div>
+    <div class="status-dot \${status}" title="\${r.status === 'ok' ? 'Success' : 'Failed'}"></div>
+    \${r.url ? \`<a class="redownload-btn" href="\${r.url}" target="_blank" rel="noopener">↗ Open</a>\` : ''}
+  </div>\`;
+}
+</script>
+</body>
+</html>`;
+
+/*
+========================================
+ROUTES
+========================================
+*/
 
 app.get("/", (req, res) => {
-  res.send("Bot Running ✅");
+  res.send("Bot Running ✅ | <a href='/dashboard'>Dashboard</a>");
+});
+
+app.get("/dashboard", (req, res) => {
+  res.send(DASHBOARD_HTML);
+});
+
+app.get("/api/history/:userId", (req, res) => {
+  const history = loadHistory();
+  const userId = req.params.userId;
+  if (!history[userId]) {
+    return res.json({ error: "not found" });
+  }
+  res.json(history[userId]);
 });
 
 const PORT = process.env.PORT || 3000;
@@ -27,88 +665,145 @@ app.listen(PORT, () => {
 
 /*
 ========================================
-CLEAR OLD WEBHOOK
+TOKEN
 ========================================
 */
 
 const TOKEN = process.env.BOT_TOKEN;
 
-async function clearTelegramWebhook() {
-  try {
-    await axios.get(`https://api.telegram.org/bot${TOKEN}/deleteWebhook`);
-    console.log("✅ Old webhook removed");
-  } catch (err) {
-    console.log("deleteWebhook error:", err.message || err);
-  }
-}
-
-process.env.PATH += ":/usr/local/bin";
-
 /*
 ========================================
-yt-dlp helper
+CLEAR WEBHOOK
 ========================================
 */
 
-// Ensure yt-dlp is available (use system binary or download yt-dlp.exe on Windows)
-let YTDLP_PATH = "/tmp/yt-dlp";
-
-async function ensureYtDlp() {
-  const localExe = process.platform === "win32"
-  ? path.join(__dirname, "yt-dlp.exe")
-  : "/tmp/yt-dlp";
+async function clearTelegramWebhook() {
 
   try {
-    const check = spawnSync(YTDLP_PATH, ["--version"], { encoding: "utf8" });
-    if (check.status === 0) {
-      console.log("yt-dlp found in PATH:", check.stdout.trim());
-      return YTDLP_PATH;
-    }
-  } catch (e) {}
 
-  if (fs.existsSync(localExe)) {
-  console.log("Using local yt-dlp at", localExe);
-  YTDLP_PATH = localExe;
-  return localExe;
-}
+    await axios.get(
+      `https://api.telegram.org/bot${TOKEN}/deleteWebhook`
+    );
 
-  // Attempt to download yt-dlp for Windows (exe) or Unix binary
-  try {
-    console.log("yt-dlp not found in PATH — downloading...");
-    const downloadUrl = process.platform === 'win32'
-      ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
-      : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
+    console.log("✅ Old webhook removed");
 
-    const resp = await axios.get(downloadUrl, { responseType: 'arraybuffer' });
-    fs.writeFileSync(localExe, resp.data);
-    try { fs.chmodSync(localExe, 0o755); } catch (e) {}
-    console.log('Downloaded yt-dlp to', localExe);
-    return localExe;
-  } catch (e) {
-    console.warn('Failed to download yt-dlp:', e.message || e);
-    return YTDLP_PATH; // fall back — will likely error later
+  } catch (err) {
+
+    console.log(
+      "deleteWebhook error:",
+      err.message || err
+    );
+
   }
 
 }
 
+/*
+========================================
+YT-DLP CHECK
+========================================
+*/
 
-const bot = new TelegramBot(TOKEN, { polling: false });
+let YTDLP_PATH = "yt-dlp";
 
-// Handle polling errors (e.g., 409 conflict when another instance is running)
-bot.on("polling_error", async (err) => {
-  console.error("error: [polling_error]", err && err.message ? err.message : err);
+/*
+========================================
+COOKIES PATH — upload cookies.txt to project root
+Set env var COOKIES_PATH or place file at ./cookies.txt
+========================================
+*/
+const COOKIES_PATH = process.env.COOKIES_PATH || path.join(__dirname, "cookies.txt");
+const HAS_COOKIES = fs.existsSync(COOKIES_PATH);
+if (HAS_COOKIES) {
+  console.log("✅ YouTube cookies.txt found:", COOKIES_PATH);
+} else {
+  console.log("⚠️  No cookies.txt found — YouTube may fail on Render");
+}
 
-  try {
-    if (err && err.code === "ETELEGRAM" && err.message && err.message.includes("409")) {
-      try { await bot.deleteWebHook(); } catch (e) { console.error("deleteWebHook error", e); }
-      try { await bot.stopPolling(); } catch (e) {}
-      setTimeout(() => {
-        try { bot.startPolling({ params: { timeout: 30, limit: 100, allowed_updates: ['message', 'callback_query'], drop_pending_updates: true } }); } catch (e) { console.error("failed restart", e); }
-      }, 1500);
+async function ensureYtDlp() {
+
+  return new Promise((resolve) => {
+
+    exec(
+      "yt-dlp --version",
+
+      (err, stdout, stderr) => {
+
+        if (err) {
+
+          console.log("❌ yt-dlp not found");
+          console.log(stderr);
+          return resolve(false);
+
+        }
+
+        console.log("✅ yt-dlp found in PATH:", stdout.trim());
+        resolve(true);
+
+      }
+    );
+
+  });
+
+}
+
+/*
+========================================
+TELEGRAM BOT
+========================================
+*/
+
+const bot = new TelegramBot(
+  TOKEN,
+  { polling: false }
+);
+
+/*
+========================================
+POLLING ERROR
+========================================
+*/
+
+bot.on(
+  "polling_error",
+
+  async (err) => {
+
+    console.error("polling_error:", err.message || err);
+
+    try {
+
+      if (
+        err.code === "ETELEGRAM" &&
+        err.message.includes("409")
+      ) {
+
+        try { await bot.deleteWebHook(); } catch {}
+        try { await bot.stopPolling(); } catch {}
+
+        setTimeout(() => {
+
+          bot.startPolling({
+            params: {
+              timeout: 30,
+              limit: 100,
+              allowed_updates: ["message", "callback_query"],
+              drop_pending_updates: true
+            }
+          });
+
+        }, 1500);
+
+      }
+
+    } catch (e) {
+
+      console.log(e);
+
     }
-  } catch (e) { console.error(e); }
 
-});
+  }
+);
 
 /*
 ========================================
@@ -126,57 +821,89 @@ STOP POLLING
 */
 
 process.on("SIGINT", async () => {
-  console.log("Stopping bot...");
   try { await bot.stopPolling(); } catch {}
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
-  console.log("Stopping bot...");
   try { await bot.stopPolling(); } catch {}
   process.exit(0);
 });
 
 /*
 ========================================
-DOWNLOADS
+DOWNLOAD FOLDER
 ========================================
 */
 
-const DOWNLOAD_DIR = "/tmp";
+const DOWNLOAD_DIR = path.join(__dirname, "downloads");
+
+if (!fs.existsSync(DOWNLOAD_DIR)) {
+  fs.mkdirSync(DOWNLOAD_DIR);
+}
 
 console.log("🚀 Downloader Bot Running");
 
-// In-memory store to avoid exceeding Telegram callback_data limits
+/*
+========================================
+PENDING DOWNLOADS
+========================================
+*/
+
 const pendingDownloads = new Map();
-function makeCallback(action, url) {
-  const id = `${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
-  pendingDownloads.set(id, url);
+
+function makeCallback(action, url, userId, username) {
+  const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  pendingDownloads.set(id, { url, userId, username });
   return `${action}|${id}`;
 }
 
-const BASE_URL = process.env.BASE_URL || 'https://AmertakBotDownloader.onrender.com';
+/*
+========================================
+BUTTONS
+========================================
+*/
+
+const BASE_URL =
+  process.env.BASE_URL ||
+  "https://AmertakBotDownloader.onrender.com";
+
 const BUTTONS = {
   reply_markup: {
     inline_keyboard: [[
-      { text: 'Tools', url: 'https://tools-amertak.vercel.app' },
-      { text: 'Dashboard', url: `${BASE_URL}/dashboard` }
+      {
+        text: "Tools",
+        url: "https://tools-amertak.vercel.app"
+      },
+      {
+        text: "Dashboard",
+        url: `${BASE_URL}/dashboard`
+      }
     ]]
   }
 };
+
 /*
 ========================================
 START
 ========================================
 */
 
-bot.onText(/\/start/, async (msg) => {
-  bot.sendMessage(msg.chat.id,
+bot.onText(
+  /\/start/,
+
+  async (msg) => {
+
+    bot.sendMessage(
+
+      msg.chat.id,
+
 `⚑ *សូមស្វាគមន៏មកកាន់ Amertak Bot Downloader*
+
 ✱ Commands:
 
-✦ /dashboard - Open dashboard to view history download and redownload
-✦ /clear - clear download history
+✦ /dashboard
+✦ /clear
 
 ✱ Supported Platforms
 
@@ -185,14 +912,59 @@ bot.onText(/\/start/, async (msg) => {
 ✦ Pinterest
 ✦ Spotify
 
-✱ How to use - របៀបប្រើ
+✱ How to use
 
-✦ (KHM) ផ្ញើលីងទៅកាន់ Bot រួចជ្រើសរើស formats
-✦ (ENG) Send Link to bot and then choose a format button
+✦ Send link to bot
+✦ Choose format
 
-✦ សូមផ្ញើរលីងដែលត្រឺមត្រូវ! ✦
+⚑ *Owner: @Amertak_Network*`,
 
-⚑ *Owner: @Amertak_Network*`, BUTTONS);
+      {
+        parse_mode: "Markdown",
+        ...BUTTONS
+      }
+
+    );
+
+  }
+);
+
+/*
+========================================
+/dashboard COMMAND
+========================================
+*/
+
+bot.onText(/\/dashboard/, async (msg) => {
+  const uid = msg.from.id;
+  bot.sendMessage(
+    msg.chat.id,
+    `📊 *Dashboard*\n\nView your download history:\n${BASE_URL}/dashboard?uid=${uid}\n\nYour User ID: \`${uid}\``,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "Open Dashboard", url: `${BASE_URL}/dashboard?uid=${uid}` }
+        ]]
+      }
+    }
+  );
+});
+
+/*
+========================================
+/clear COMMAND — clears user history
+========================================
+*/
+
+bot.onText(/\/clear/, async (msg) => {
+  const userId = String(msg.from.id);
+  const history = loadHistory();
+  if (history[userId]) {
+    history[userId].records = [];
+    saveHistory(history);
+  }
+  bot.sendMessage(msg.chat.id, "✓ Your download history has been cleared.");
 });
 
 /*
@@ -201,206 +973,380 @@ MESSAGE HANDLER
 ========================================
 */
 
-bot.on("message", async (msg) => {
-  try {
-    const chatId = msg.chat.id;
-    const text = msg.text;
-    if (!text) return;
-    if (text.startsWith("/")) return;
+bot.on(
+  "message",
 
-    if (text.includes("youtube.com") || text.includes("youtu.be")) {
-      const ytOpts = {
-        parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: [[
-          { text: "⮩ វីដេអូ", callback_data: makeCallback("yt_mp4", text) },
-          { text: "⮩ សំឡេង", callback_data: makeCallback("yt_mp3", text) },
-          { text: "⮩ Thumbnail", callback_data: makeCallback("yt_thumb", text) }
-        ]] }
-      };
-      return bot.sendMessage(chatId, `⚑ *YouTube Downloader*\n\nChoose format ⮯`, ytOpts);
+  async (msg) => {
+
+    try {
+
+      const chatId = msg.chat.id;
+      const text = msg.text;
+      const userId = String(msg.from.id);
+      const username = msg.from.username || msg.from.first_name || "User";
+
+      if (!text) return;
+      if (text.startsWith("/")) return;
+
+      /*
+      ========================================
+      YOUTUBE
+      ========================================
+      */
+
+      if (
+        text.includes("youtube.com") ||
+        text.includes("youtu.be")
+      ) {
+
+        return bot.sendMessage(
+
+          chatId,
+          `⚑ *YouTube Downloader*\n\nChoose format ⮯`,
+
+          {
+            parse_mode: "Markdown",
+            reply_markup: {
+              inline_keyboard: [[
+                {
+                  text: "⮩ វីដេអូ",
+                  callback_data: makeCallback("yt_mp4", text, userId, username)
+                },
+                {
+                  text: "⮩ សំឡេង",
+                  callback_data: makeCallback("yt_mp3", text, userId, username)
+                },
+                {
+                  text: "⮩ Thumbnail",
+                  callback_data: makeCallback("yt_thumb", text, userId, username)
+                }
+              ]]
+            }
+          }
+
+        );
+
+      }
+
+      /*
+      ========================================
+      TIKTOK
+      ========================================
+      */
+
+      if (text.includes("tiktok.com")) {
+
+        return bot.sendMessage(
+
+          chatId,
+          `⚑ *TikTok Downloader*\n\nChoose format ⮯`,
+
+          {
+            parse_mode: "Markdown",
+            reply_markup: {
+              inline_keyboard: [[
+                {
+                  text: "⮩ វីដេអូ",
+                  callback_data: makeCallback("tt_video", text, userId, username)
+                },
+                {
+                  text: "⮩ សំឡេង",
+                  callback_data: makeCallback("tt_audio", text, userId, username)
+                },
+                {
+                  text: "⮩ រូបភាព",
+                  callback_data: makeCallback("tt_image", text, userId, username)
+                }
+              ]]
+            }
+          }
+
+        );
+
+      }
+
+      /*
+      ========================================
+      PINTEREST
+      ========================================
+      */
+
+      if (
+        text.includes("pinterest.com") ||
+        text.includes("pin.it")
+      ) {
+
+        return bot.sendMessage(
+
+          chatId,
+          `⚑ *Pinterest Downloader*\n\nChoose format ⮯`,
+
+          {
+            parse_mode: "Markdown",
+            reply_markup: {
+              inline_keyboard: [[
+                {
+                  text: "⮩ ទាញយករូបភាព",
+                  callback_data: makeCallback("pin_image", text, userId, username)
+                }
+              ]]
+            }
+          }
+
+        );
+
+      }
+
+      /*
+      ========================================
+      SPOTIFY
+      ========================================
+      */
+
+      if (
+        text.includes("spotify.com") ||
+        text.startsWith("spotify:")
+      ) {
+
+        return spotifyInfo(chatId, text, userId, username);
+
+      }
+
+      /*
+      ========================================
+      UNSUPPORTED
+      ========================================
+      */
+
+      bot.sendMessage(chatId, "✘ Unsupported URL");
+
+    } catch (err) {
+
+      console.log(err);
+
     }
 
-    if (text.includes("tiktok.com")) {
-      const ttOpts = { parse_mode: "Markdown", reply_markup: { inline_keyboard: [[
-        { text: "⮩ វីដេអូ", callback_data: makeCallback("tt_video", text) },
-        { text: "⮩ សំឡេង", callback_data: makeCallback("tt_audio", text) },
-        { text: "⮩ រូបភាព", callback_data: makeCallback("tt_image", text) }
-      ]] } };
-      return bot.sendMessage(chatId, `⚑ *TikTok Downloader*\n\nChoose format ⮯`, ttOpts);
-    }
-
-    if (text.includes("pinterest.com") || text.includes("pin.it")) {
-      const pinOpts = { parse_mode: "Markdown", reply_markup: { inline_keyboard: [
-        [{ text: "⮩ ទាញយករូបភាព", callback_data: makeCallback("pin_image", text) }]
-      ] } };
-      return bot.sendMessage(chatId, `⚑ *Pinterest Downloader*\n\nChoose format ⮯`, pinOpts);
-    }
-
-    if (text.includes("spotify.com") || text.startsWith("spotify:")) return spotifyInfo(chatId, text);
-
-    bot.sendMessage(chatId, "✘ Unsupported URL");
-  } catch (err) { console.log(err); }
-});
-
-/*
-========================================
-BUTTON HANDLER
-========================================
-*/
-
-bot.on("callback_query", async (query) => {
-  try {
-    if (!query || !query.data || !query.message) return;
-    await bot.answerCallbackQuery(query.id, { text: "Processing...", show_alert: false });
-    const chatId = query.message.chat.id;
-    const msgId = query.message.message_id;
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId }).catch(() => {});
-    const data = query.data.split("|");
-    const action = data[0];
-    const key = data[1];
-    let url = key;
-    if (pendingDownloads.has(key)) {
-      url = pendingDownloads.get(key);
-      pendingDownloads.delete(key);
-    }
-
-    if (action === "yt_mp4") return downloadYouTubeVideo(chatId, url);
-    if (action === "yt_mp3") return downloadYouTubeAudio(chatId, url);
-    if (action === "yt_thumb") return downloadYouTubeThumbnail(chatId, url);
-    if (action === "tt_video") return downloadTikTokVideo(chatId, url);
-    if (action === "tt_audio") return downloadTikTokAudio(chatId, url);
-    if (action === "tt_image") return downloadTikTokImage(chatId, url);
-    if (action === "pin_image") return downloadPinterest(chatId, url);
-
-    await bot.sendMessage(chatId, "✘ Unknown action");
-  } catch (err) {
-    console.log(err);
   }
-});
+);
 
 /*
 ========================================
-YOUTUBE VIDEO
+CALLBACK QUERY
 ========================================
 */
 
-async function downloadYouTubeVideo(chatId, url) {
+bot.on(
+  "callback_query",
+
+  async (query) => {
+
+    try {
+
+      if (!query || !query.data) return;
+
+      await bot.answerCallbackQuery(
+        query.id,
+        { text: "Processing..." }
+      );
+
+      const chatId = query.message.chat.id;
+      const data = query.data.split("|");
+      const action = data[0];
+      const key = data[1];
+
+      let url = key;
+      let userId = String(query.from.id);
+      let username = query.from.username || query.from.first_name || "User";
+
+      if (pendingDownloads.has(key)) {
+        const stored = pendingDownloads.get(key);
+        url = stored.url;
+        userId = stored.userId || userId;
+        username = stored.username || username;
+        pendingDownloads.delete(key);
+      }
+
+      if (action === "yt_mp4")   return downloadYouTubeVideo(chatId, url, userId, username);
+      if (action === "yt_mp3")   return downloadYouTubeAudio(chatId, url, userId, username);
+      if (action === "yt_thumb") return downloadYouTubeThumbnail(chatId, url, userId, username);
+      if (action === "tt_video") return downloadTikTokVideo(chatId, url, userId, username);
+      if (action === "tt_audio") return downloadTikTokAudio(chatId, url, userId, username);
+      if (action === "tt_image") return downloadTikTokImage(chatId, url, userId, username);
+      if (action === "pin_image") return downloadPinterest(chatId, url, userId, username);
+
+    } catch (err) {
+
+      console.log(err);
+
+    }
+
+  }
+);
+
+/*
+========================================
+RAPIDAPI HELPER — YouTube download via RapidAPI
+No IP block, no cookies needed, free 500/day
+Set RAPIDAPI_KEY in Render environment variables
+========================================
+*/
+
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
+
+// Extract YouTube video ID from URL
+function extractYtId(url) {
+  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|shorts\/|embed\/))([\w-]{11})/);
+  return match ? match[1] : null;
+}
+
+// Download stream URL to file — follows redirects properly
+async function downloadStreamToFile(streamUrl, destPath, extraHeaders) {
+  extraHeaders = extraHeaders || {};
+  const response = await axios.get(streamUrl, {
+    responseType: "stream",
+    timeout: 1000 * 60 * 8,
+    maxRedirects: 10,
+    headers: Object.assign({
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "*/*",
+      "Referer": "https://rapidapi.com/"
+    }, extraHeaders)
+  });
+  return new Promise(function(resolve, reject) {
+    const writer = fs.createWriteStream(destPath);
+    response.data.pipe(writer);
+    writer.on("finish", resolve);
+    writer.on("error", reject);
+  });
+}
+
+/*
+========================================
+YOUTUBE VIDEO — via RapidAPI (no IP block)
+========================================
+*/
+
+async function downloadYouTubeVideo(chatId, url, userId, username) {
+
   const wait = await bot.sendMessage(chatId, "⏳ Downloading video...");
-  const filePrefix = Date.now().toString();
-  const outputTemplate = path.join(DOWNLOAD_DIR, `${filePrefix}.%(ext)s`);
-  const args = [
-  "-f",
-  "bv*[height<=480]+ba/b[height<=480]",
-  "--merge-output-format",
-  "mp4",
-  "--force-ipv4",
-  "--no-playlist",
-  "--no-warnings",
-  "--no-check-certificates",
-  "--restrict-filenames",
-  "--max-filesize",
-  "50M",
-  "-o",
-  outputTemplate,
-  url
-];
 
-  execFile(
-  YTDLP_PATH,
-  args,
-  {
-    timeout: 1000 * 60 * 5,
-    maxBuffer: 1024 * 1024 * 10
-  }, async (err, stdout, stderr) => {
-    const outputFile = findDownloadedFile(filePrefix);
-    if (err || !outputFile) {
-      console.log("yt-dlp video error:", err || "no output file", stderr || stdout);
-      await bot.sendMessage(chatId, "✘ Video failed");
-      cleanupDownloadedFiles(filePrefix);
-      bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-      return;
+  try {
+
+    if (!RAPIDAPI_KEY) throw new Error("RAPIDAPI_KEY not set");
+
+    const videoId = extractYtId(url);
+    if (!videoId) throw new Error("Invalid YouTube URL");
+
+    // Use youtube-mp36 API on RapidAPI (returns mp4 link)
+    const { data } = await axios.get("https://youtube-mp36.p.rapidapi.com/dl", {
+      params: { id: videoId },
+      headers: {
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": "youtube-mp36.p.rapidapi.com"
+      },
+      timeout: 30000
+    });
+
+    console.log("[YT_MP4 rapidapi]", JSON.stringify(data));
+
+    if (data.status !== "ok" || !data.link) throw new Error(data.msg || "No link returned");
+
+    const filePrefix = Date.now().toString();
+    const outputFile = path.join(DOWNLOAD_DIR, filePrefix + ".mp3");
+
+    await downloadStreamToFile(data.link, outputFile);
+
+    const stat = fs.statSync(outputFile);
+
+    if (stat.size > 49 * 1024 * 1024) {
+
+      addHistory(userId, username, { platform: "youtube", format: "mp4", url, status: "fail" });
+      await bot.sendMessage(chatId, "✘ File too large (>50MB). Try a shorter video.");
+
+    } else {
+
+      await bot.sendAudio(chatId, outputFile, { caption: "✓ YouTube Audio/Video" });
+
+      addHistory(userId, username, { platform: "youtube", format: "mp4", url, status: "ok" });
+
     }
 
-    try {
-      await bot.sendVideo(chatId, fs.createReadStream(outputFile), { caption: "✓ YouTube Video" });
-    } catch (e) {
-      console.log("sendVideo error:", e);
-      await bot.sendMessage(chatId, "✘ Video upload failed");
-    }
+    try { fs.unlinkSync(outputFile); } catch {}
 
-    cleanupDownloadedFiles(filePrefix);
-    bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-  });
+  } catch (err) {
+
+    console.log("[YT_MP4 err]", err.message || err);
+    addHistory(userId, username, { platform: "youtube", format: "mp4", url, status: "fail" });
+    await bot.sendMessage(chatId, "✘ Video download failed.");
+
+  }
+
+  bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+
 }
 
 /*
 ========================================
-YOUTUBE AUDIO
+YOUTUBE AUDIO — via RapidAPI (no IP block)
 ========================================
 */
 
-async function downloadYouTubeAudio(chatId, url) {
+async function downloadYouTubeAudio(chatId, url, userId, username) {
+
   const wait = await bot.sendMessage(chatId, "⏳ Downloading audio...");
-  const filePrefix = Date.now().toString();
-  const outputTemplate = path.join(DOWNLOAD_DIR, `${filePrefix}.%(ext)s`);
-  const args = [
-  "-f",
-  "bestaudio",
-  "-x",
-  "--audio-format",
-  "mp3",
-  "--force-ipv4",
-  "--no-playlist",
-  "--no-warnings",
-  "--no-check-certificates",
-  "--restrict-filenames",
-  "-o",
-  outputTemplate,
-  url
-];
 
-  execFile(
-  YTDLP_PATH,
-  args,
-  {
-    timeout: 1000 * 60 * 5,
-    maxBuffer: 1024 * 1024 * 10
-  },
-  async (err, stdout, stderr) => {
-    const outputFile = findDownloadedFile(filePrefix);
-    if (err || !outputFile) {
-      console.log("yt-dlp audio error:", err || "no output file", stderr || stdout);
-      await bot.sendMessage(chatId, "✘ Audio failed");
-      cleanupDownloadedFiles(filePrefix);
-      bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-      return;
+  try {
+
+    if (!RAPIDAPI_KEY) throw new Error("RAPIDAPI_KEY not set");
+
+    const videoId = extractYtId(url);
+    if (!videoId) throw new Error("Invalid YouTube URL");
+
+    const { data } = await axios.get("https://youtube-mp36.p.rapidapi.com/dl", {
+      params: { id: videoId },
+      headers: {
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": "youtube-mp36.p.rapidapi.com"
+      },
+      timeout: 30000
+    });
+
+    console.log("[YT_MP3 rapidapi]", JSON.stringify(data));
+
+    if (data.status !== "ok" || !data.link) throw new Error(data.msg || "No link returned");
+
+    const filePrefix = Date.now().toString();
+    const outputFile = path.join(DOWNLOAD_DIR, filePrefix + ".mp3");
+
+    await downloadStreamToFile(data.link, outputFile);
+
+    const stat = fs.statSync(outputFile);
+
+    if (stat.size > 49 * 1024 * 1024) {
+
+      addHistory(userId, username, { platform: "youtube", format: "mp3", url, status: "fail" });
+      await bot.sendMessage(chatId, "✘ Audio too large (>50MB)");
+
+    } else {
+
+      await bot.sendAudio(chatId, outputFile, { caption: "✓ YouTube Audio" });
+
+      addHistory(userId, username, { platform: "youtube", format: "mp3", url, status: "ok" });
+
     }
 
-    try {
-      await bot.sendAudio(chatId, fs.createReadStream(outputFile), { caption: "✓ YouTube Audio" });
-    } catch (e) {
-      console.log("sendAudio error:", e);
-      await bot.sendMessage(chatId, "✘ Audio upload failed");
-    }
+    try { fs.unlinkSync(outputFile); } catch {}
 
-    cleanupDownloadedFiles(filePrefix);
-    bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-  });
-}
+  } catch (err) {
 
-function findDownloadedFile(prefix) {
-  const files = fs.readdirSync(DOWNLOAD_DIR);
-  const matched = files.find((name) => name.startsWith(`${prefix}.`));
-  return matched ? path.join(DOWNLOAD_DIR, matched) : null;
-}
+    console.log("[YT_MP3 err]", err.message || err);
+    addHistory(userId, username, { platform: "youtube", format: "mp3", url, status: "fail" });
+    await bot.sendMessage(chatId, "✘ Audio download failed.");
 
-function cleanupDownloadedFiles(prefix) {
-  const files = fs.readdirSync(DOWNLOAD_DIR);
-  files.forEach((name) => {
-    if (name.startsWith(`${prefix}.`)) {
-      try { fs.unlinkSync(path.join(DOWNLOAD_DIR, name)); } catch (e) { console.log("cleanup failed", e); }
-    }
-  });
+  }
+
+  bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+
 }
 
 /*
@@ -409,146 +1355,395 @@ YOUTUBE THUMBNAIL
 ========================================
 */
 
-async function downloadYouTubeThumbnail(chatId, url) {
+async function downloadYouTubeThumbnail(chatId, url, userId, username) {
+
   const wait = await bot.sendMessage(chatId, "⏳ Fetching thumbnail...");
 
+  const thumbArgs = [
+    "--get-thumbnail",
+    "--no-playlist",
+    "--extractor-args", "youtube:player_client=android,web",
+    ...(HAS_COOKIES ? ["--cookies", COOKIES_PATH] : []),
+    url
+  ];
+
   execFile(
+
     YTDLP_PATH,
-    ["--get-thumbnail", "--force-ipv4", url],
+    thumbArgs,
+    { timeout: 30000 },
+
     async (err, stdout) => {
+
       if (err) {
-        console.log(err);
+
+        addHistory(userId, username, {
+          platform: "youtube", format: "thumbnail", url, status: "fail"
+        });
+
         await bot.sendMessage(chatId, "✘ Thumbnail failed");
-      } else {
-        try {
-          await bot.sendPhoto(chatId, stdout.trim(), {
-            caption: "🖼 YouTube Thumbnail"
-          });
-        } catch (e) {
-          console.log(e);
-        }
+        bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+        return;
+
+      }
+
+      try {
+
+        await bot.sendPhoto(
+          chatId,
+          stdout.trim(),
+          { caption: "🖼 YouTube Thumbnail" }
+        );
+
+        addHistory(userId, username, {
+          platform: "youtube", format: "thumbnail", url, status: "ok"
+        });
+
+      } catch (e) {
+
+        console.log(e);
+
+        addHistory(userId, username, {
+          platform: "youtube", format: "thumbnail", url, status: "fail"
+        });
+
       }
 
       bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+
     }
   );
+
 }
 
 /*
 ========================================
-TIKTOK / PINTEREST / SPOTIFY handlers (unchanged)
+TIKTOK VIDEO
 ========================================
 */
 
-async function downloadTikTokVideo(chatId, url) {
+async function downloadTikTokVideo(chatId, url, userId, username) {
+
   const wait = await bot.sendMessage(chatId, "⏳ Downloading TikTok...");
+
   try {
+
     const api = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`;
     const { data } = await axios.get(api);
-    await bot.sendVideo(chatId, data.data.play, { caption: "✓ TikTok Video" });
-  } catch (err) { console.log(err); bot.sendMessage(chatId, "✘ TikTok failed"); }
+
+    await bot.sendVideo(
+      chatId,
+      data.data.play,
+      { caption: "✓ TikTok Video" }
+    );
+
+    addHistory(userId, username, {
+      platform: "tiktok", format: "mp4", url, status: "ok"
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    addHistory(userId, username, {
+      platform: "tiktok", format: "mp4", url, status: "fail"
+    });
+
+    bot.sendMessage(chatId, "✘ TikTok failed");
+
+  }
+
   bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+
 }
 
-async function downloadTikTokAudio(chatId, url) {
+/*
+========================================
+TIKTOK AUDIO
+========================================
+*/
+
+async function downloadTikTokAudio(chatId, url, userId, username) {
+
   const wait = await bot.sendMessage(chatId, "⏳ Downloading audio...");
+
   try {
+
     const api = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`;
     const { data } = await axios.get(api);
-    await bot.sendAudio(chatId, data.data.music, { caption: "✓ TikTok Audio" });
-  } catch (err) { console.log(err); bot.sendMessage(chatId, "✘ Audio failed"); }
+
+    await bot.sendAudio(
+      chatId,
+      data.data.music,
+      { caption: "✓ TikTok Audio" }
+    );
+
+    addHistory(userId, username, {
+      platform: "tiktok", format: "audio", url, status: "ok"
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    addHistory(userId, username, {
+      platform: "tiktok", format: "audio", url, status: "fail"
+    });
+
+    bot.sendMessage(chatId, "✘ Audio failed");
+
+  }
+
   bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+
 }
 
-async function downloadTikTokImage(chatId, url) {
+/*
+========================================
+TIKTOK IMAGE
+========================================
+*/
+
+async function downloadTikTokImage(chatId, url, userId, username) {
+
   const wait = await bot.sendMessage(chatId, "⏳ Fetching image...");
+
   try {
+
     const api = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`;
     const { data } = await axios.get(api);
-    await bot.sendPhoto(chatId, data.data.cover, { caption: "✓ TikTok Image" });
-  } catch (err) { console.log(err); bot.sendMessage(chatId, "✘ Image failed"); }
+
+    await bot.sendPhoto(
+      chatId,
+      data.data.cover,
+      { caption: "✓ TikTok Image" }
+    );
+
+    addHistory(userId, username, {
+      platform: "tiktok", format: "image", url, status: "ok"
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    addHistory(userId, username, {
+      platform: "tiktok", format: "image", url, status: "fail"
+    });
+
+    bot.sendMessage(chatId, "✘ Image failed");
+
+  }
+
   bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+
 }
 
-async function downloadPinterest(chatId, url) {
+/*
+========================================
+PINTEREST
+========================================
+*/
+
+async function downloadPinterest(chatId, url, userId, username) {
+
   const wait = await bot.sendMessage(chatId, "⏳ Downloading Pinterest...");
+
   try {
+
     const api = `https://pinterestdownloader.io/frontendService/DownloaderService?url=${encodeURIComponent(url)}`;
     const { data } = await axios.get(api);
     const media = data.medias[0].url;
-    await bot.sendPhoto(chatId, media, { caption: "✓ Pinterest Image" });
-  } catch (err) { console.log(err); bot.sendMessage(chatId, "✘ Pinterest failed"); }
+
+    await bot.sendPhoto(
+      chatId,
+      media,
+      { caption: "✓ Pinterest Image" }
+    );
+
+    addHistory(userId, username, {
+      platform: "pinterest", format: "image", url, status: "ok"
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    addHistory(userId, username, {
+      platform: "pinterest", format: "image", url, status: "fail"
+    });
+
+    bot.sendMessage(chatId, "✘ Pinterest failed");
+
+  }
+
   bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+
 }
 
-async function spotifyInfo(chatId, url) {
-  const wait = await bot.sendMessage(chatId, "⏳ Fetching Spotify...");
-  try {
-    const normalizedUrl = normalizeSpotifyUrl(url);
-    const api = `https://open.spotify.com/oembed?url=${encodeURIComponent(normalizedUrl)}`;
-    let { data } = await axios.get(api).catch(() => ({ data: null }));
-    let thumb = data && data.thumbnail_url ? data.thumbnail_url : null;
-    let title = data && data.title ? data.title : null;
-    let author = data && data.author_name ? data.author_name : null;
+/*
+========================================
+SPOTIFY
+========================================
+*/
 
-    if (!thumb || !title) {
-      try {
-        const page = await axios.get(normalizedUrl);
-        const html = page.data;
-        const imgMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) || html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
-        const titleMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) || html.match(/<meta[^>]+name=["']twitter:title["'][^>]+content=["']([^"']+)["']/i);
-        const authorMatch = html.match(/<meta[^>]+name=["']author["'][^>]+content=["']([^"']+)["']/i) || html.match(/<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']+)["']/i);
-        if (imgMatch) thumb = thumb || imgMatch[1];
-        if (titleMatch) title = title || titleMatch[1];
-        if (authorMatch) author = author || authorMatch[1];
-      } catch (pageErr) {
-        console.log("spotify page scrape failed", pageErr.message || pageErr);
+async function spotifyInfo(chatId, url, userId, username) {
+
+  const wait = await bot.sendMessage(chatId, "⏳ Fetching Spotify track...");
+
+  try {
+
+    // Step 1: get track metadata from Spotify oEmbed
+    const api = `https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`;
+    const { data } = await axios.get(api);
+
+    const trackTitle = data.title || "Unknown Track";
+    const artistName = data.author_name || "";
+    const thumbUrl = data.thumbnail_url;
+
+    // Step 2: send info + thumbnail first
+    await bot.sendPhoto(
+      chatId,
+      thumbUrl,
+      {
+        caption:
+`🎵 Spotify Track
+
+📌 ${trackTitle}
+👤 ${artistName}
+
+⏳ Searching audio on YouTube...`
       }
+    );
+
+    bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+
+    // Step 3: search YouTube for the track and download audio
+    const searchQuery = `${trackTitle} ${artistName} official audio`;
+    const filePrefix = Date.now().toString();
+    const outputTemplate = path.join(DOWNLOAD_DIR, `${filePrefix}.%(ext)s`);
+
+    const wait2 = await bot.sendMessage(chatId, "⏳ Downloading audio...");
+
+    // Search YouTube for the track via RapidAPI search endpoint
+    let searchVideoId = null;
+    try {
+      const searchResp = await axios.get("https://youtube-search-and-download.p.rapidapi.com/search", {
+        params: { query: searchQuery, type: "v", sort: "r" },
+        headers: {
+          "x-rapidapi-key": RAPIDAPI_KEY,
+          "x-rapidapi-host": "youtube-search-and-download.p.rapidapi.com"
+        },
+        timeout: 15000
+      });
+      const items = searchResp.data && searchResp.data.contents;
+      if (items && items.length > 0) {
+        searchVideoId = items[0].video && items[0].video.videoId;
+      }
+    } catch (se) {
+      console.log("[SPOTIFY search err]", se.message);
     }
 
-    if (!thumb) {
-      await bot.sendMessage(chatId, "✘ Spotify thumbnail unavailable");
+    if (!searchVideoId) {
+      addHistory(userId, username, { platform: "spotify", format: "audio", url, status: "fail" });
+      await bot.sendMessage(chatId, `✘ Could not find audio for: *${trackTitle}*`, { parse_mode: "Markdown" });
+      bot.deleteMessage(chatId, wait2.message_id).catch(() => {});
       return;
     }
 
-    await bot.sendPhoto(chatId, thumb, {
-      caption: `🎵 Spotify Track\n\n📌 ${title || 'Unknown'}\n\n👤 ${author || 'Unknown'}`
+    // Download MP3 via RapidAPI
+    const dlResp = await axios.get("https://youtube-mp36.p.rapidapi.com/dl", {
+      params: { id: searchVideoId },
+      headers: {
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": "youtube-mp36.p.rapidapi.com"
+      },
+      timeout: 30000
     });
+
+    const dlData = dlResp.data;
+    console.log("[SPOTIFY rapidapi]", JSON.stringify(dlData));
+
+    if (dlData.status !== "ok" || !dlData.link) {
+      addHistory(userId, username, { platform: "spotify", format: "audio", url, status: "fail" });
+      await bot.sendMessage(chatId, `✘ Could not download audio for: *${trackTitle}*`, { parse_mode: "Markdown" });
+      bot.deleteMessage(chatId, wait2.message_id).catch(() => {});
+      return;
+    }
+
+    const outputFile = path.join(DOWNLOAD_DIR, filePrefix + ".mp3");
+    await downloadStreamToFile(dlData.link, outputFile);
+
+    const stat = fs.statSync(outputFile);
+
+    if (stat.size > 49 * 1024 * 1024) {
+
+      addHistory(userId, username, { platform: "spotify", format: "audio", url, status: "fail" });
+      await bot.sendMessage(chatId, "✘ Audio too large (>50MB)");
+
+    } else {
+
+      await bot.sendAudio(chatId, outputFile, {
+        caption: `🎵 ${trackTitle}\n👤 ${artistName}`,
+        title: trackTitle,
+        performer: artistName
+      });
+
+      addHistory(userId, username, { platform: "spotify", format: "audio", url, status: "ok" });
+
+    }
+
+    try { fs.unlinkSync(outputFile); } catch {}
+    bot.deleteMessage(chatId, wait2.message_id).catch(() => {});
+
   } catch (err) {
+
     console.log(err);
-    await bot.sendMessage(chatId, "✘ Spotify failed");
-  } finally {
+
+    addHistory(userId, username, {
+      platform: "spotify", format: "audio", url, status: "fail"
+    });
+
+    bot.sendMessage(chatId, "✘ Spotify failed — invalid link?");
     bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+
   }
+
 }
 
-function normalizeSpotifyUrl(url) {
-  if (!url) return url;
-  if (url.startsWith('spotify:')) {
-    const parts = url.split(':');
-    if (parts.length >= 3) return `https://open.spotify.com/${parts[1]}/${parts[2]}`;
-  }
-  if (url.startsWith('http')) return url;
-  if (url.startsWith('www.')) return `https://${url}`;
-  return url;
-}
+/*
+========================================
+START BOT
+========================================
+*/
 
-// Start polling once yt-dlp check/download has been attempted
 (async () => {
-  YTDLP_PATH = await ensureYtDlp();
+
+  const ok = await ensureYtDlp();
+
+  if (!ok) {
+    process.exit(1);
+  }
+
   await clearTelegramWebhook();
+
   try {
+
     await bot.startPolling({
-  interval: 300,
-  autoStart: true,
-  params: {
-    timeout: 30,
-    limit: 100,
-    allowed_updates: ['message', 'callback_query'],
-    drop_pending_updates: true
+      params: {
+        timeout: 30,
+        limit: 100,
+        allowed_updates: ["message", "callback_query"],
+        drop_pending_updates: true
+      }
+    });
+
+    console.log("✅ Bot polling started");
+
+  } catch (err) {
+
+    console.log("startPolling error:", err.message || err);
+
   }
-});
-  } catch (e) {
-    console.error('startPolling failed', e);
-  }
+
 })();
