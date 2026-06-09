@@ -27,13 +27,20 @@ app.listen(PORT, () => {
 
 /*
 ========================================
-CLEAR OLD WEBHOOK
+TOKEN
 ========================================
 */
 
 const TOKEN = process.env.BOT_TOKEN;
 
+/*
+========================================
+CLEAR WEBHOOK
+========================================
+*/
+
 async function clearTelegramWebhook() {
+
   try {
 
     await axios.get(
@@ -50,11 +57,12 @@ async function clearTelegramWebhook() {
     );
 
   }
+
 }
 
 /*
 ========================================
-yt-dlp helper
+YT-DLP CHECK
 ========================================
 */
 
@@ -72,12 +80,10 @@ async function ensureYtDlp() {
         if (err) {
 
           console.log(
-            "❌ yt-dlp not found in PATH"
+            "❌ yt-dlp not found"
           );
 
-          console.log(
-            stderr || err.message
-          );
+          console.log(stderr);
 
           return resolve(false);
 
@@ -87,8 +93,6 @@ async function ensureYtDlp() {
           "✅ yt-dlp found in PATH:",
           stdout.trim()
         );
-
-        YTDLP_PATH = "yt-dlp";
 
         resolve(true);
 
@@ -124,53 +128,38 @@ bot.on(
   async (err) => {
 
     console.error(
-      "error: [polling_error]",
-      err && err.message
-        ? err.message
-        : err
+      "polling_error:",
+      err.message || err
     );
 
     try {
 
       if (
-        err &&
         err.code === "ETELEGRAM" &&
-        err.message &&
         err.message.includes("409")
       ) {
 
         try {
           await bot.deleteWebHook();
-        } catch (e) {}
+        } catch {}
 
         try {
           await bot.stopPolling();
-        } catch (e) {}
+        } catch {}
 
         setTimeout(() => {
 
-          try {
-
-            bot.startPolling({
-              params: {
-                timeout: 30,
-                limit: 100,
-                allowed_updates: [
-                  "message",
-                  "callback_query"
-                ],
-                drop_pending_updates: true
-              }
-            });
-
-          } catch (e) {
-
-            console.error(
-              "failed restart",
-              e
-            );
-
-          }
+          bot.startPolling({
+            params: {
+              timeout: 30,
+              limit: 100,
+              allowed_updates: [
+                "message",
+                "callback_query"
+              ],
+              drop_pending_updates: true
+            }
+          });
 
         }, 1500);
 
@@ -178,7 +167,7 @@ bot.on(
 
     } catch (e) {
 
-      console.error(e);
+      console.log(e);
 
     }
 
@@ -207,29 +196,33 @@ STOP POLLING
 ========================================
 */
 
-process.on("SIGINT", async () => {
+process.on(
+  "SIGINT",
 
-  console.log("Stopping bot...");
+  async () => {
 
-  try {
-    await bot.stopPolling();
-  } catch {}
+    try {
+      await bot.stopPolling();
+    } catch {}
 
-  process.exit(0);
+    process.exit(0);
 
-});
+  }
+);
 
-process.on("SIGTERM", async () => {
+process.on(
+  "SIGTERM",
 
-  console.log("Stopping bot...");
+  async () => {
 
-  try {
-    await bot.stopPolling();
-  } catch {}
+    try {
+      await bot.stopPolling();
+    } catch {}
 
-  process.exit(0);
+    process.exit(0);
 
-});
+  }
+);
 
 /*
 ========================================
@@ -242,8 +235,12 @@ const DOWNLOAD_DIR = path.join(
   "downloads"
 );
 
-if (!fs.existsSync(DOWNLOAD_DIR)) {
+if (
+  !fs.existsSync(DOWNLOAD_DIR)
+) {
+
   fs.mkdirSync(DOWNLOAD_DIR);
+
 }
 
 console.log(
@@ -252,11 +249,12 @@ console.log(
 
 /*
 ========================================
-PENDING DOWNLOAD STORAGE
+PENDING DOWNLOADS
 ========================================
 */
 
-const pendingDownloads = new Map();
+const pendingDownloads =
+  new Map();
 
 function makeCallback(
   action,
@@ -288,23 +286,30 @@ const BASE_URL =
   "https://AmertakBotDownloader.onrender.com";
 
 const BUTTONS = {
+
   reply_markup: {
+
     inline_keyboard: [[
+
       {
         text: "Tools",
         url: "https://tools-amertak.vercel.app"
       },
+
       {
         text: "Dashboard",
         url: `${BASE_URL}/dashboard`
       }
+
     ]]
+
   }
+
 };
 
 /*
 ========================================
-START COMMAND
+START
 ========================================
 */
 
@@ -314,13 +319,15 @@ bot.onText(
   async (msg) => {
 
     bot.sendMessage(
+
       msg.chat.id,
 
 `⚑ *សូមស្វាគមន៏មកកាន់ Amertak Bot Downloader*
+
 ✱ Commands:
 
-✦ /dashboard - Open dashboard to view history download and redownload
-✦ /clear - clear download history
+✦ /dashboard
+✦ /clear
 
 ✱ Supported Platforms
 
@@ -329,16 +336,17 @@ bot.onText(
 ✦ Pinterest
 ✦ Spotify
 
-✱ How to use - របៀបប្រើ
+✱ How to use
 
-✦ (KHM) ផ្ញើលីងទៅកាន់ Bot រួចជ្រើសរើស formats
-✦ (ENG) Send Link to bot and then choose a format button
-
-✦ សូមផ្ញើរលីងដែលត្រឺមត្រូវ! ✦
+✦ Send link to bot
+✦ Choose format
 
 ⚑ *Owner: @Amertak_Network*`,
 
-      BUTTONS
+      {
+        parse_mode: "Markdown",
+        ...BUTTONS
+      }
 
     );
 
@@ -358,12 +366,17 @@ bot.on(
 
     try {
 
-      const chatId = msg.chat.id;
-      const text = msg.text;
+      const chatId =
+        msg.chat.id;
+
+      const text =
+        msg.text;
 
       if (!text) return;
 
-      if (text.startsWith("/")) return;
+      if (
+        text.startsWith("/")
+      ) return;
 
       /*
       ========================================
@@ -376,50 +389,52 @@ bot.on(
         text.includes("youtu.be")
       ) {
 
-        const ytOpts = {
-          parse_mode: "Markdown",
-
-          reply_markup: {
-            inline_keyboard: [[
-              {
-                text: "⮩ វីដេអូ",
-
-                callback_data:
-                  makeCallback(
-                    "yt_mp4",
-                    text
-                  )
-              },
-
-              {
-                text: "⮩ សំឡេង",
-
-                callback_data:
-                  makeCallback(
-                    "yt_mp3",
-                    text
-                  )
-              },
-
-              {
-                text: "⮩ Thumbnail",
-
-                callback_data:
-                  makeCallback(
-                    "yt_thumb",
-                    text
-                  )
-              }
-            ]]
-          }
-        };
-
         return bot.sendMessage(
+
           chatId,
 
           `⚑ *YouTube Downloader*\n\nChoose format ⮯`,
 
-          ytOpts
+          {
+            parse_mode: "Markdown",
+
+            reply_markup: {
+
+              inline_keyboard: [[
+
+                {
+                  text: "⮩ វីដេអូ",
+                  callback_data:
+                    makeCallback(
+                      "yt_mp4",
+                      text
+                    )
+                },
+
+                {
+                  text: "⮩ សំឡេង",
+                  callback_data:
+                    makeCallback(
+                      "yt_mp3",
+                      text
+                    )
+                },
+
+                {
+                  text: "⮩ Thumbnail",
+                  callback_data:
+                    makeCallback(
+                      "yt_thumb",
+                      text
+                    )
+                }
+
+              ]]
+
+            }
+
+          }
+
         );
 
       }
@@ -434,50 +449,52 @@ bot.on(
         text.includes("tiktok.com")
       ) {
 
-        const ttOpts = {
-          parse_mode: "Markdown",
-
-          reply_markup: {
-            inline_keyboard: [[
-              {
-                text: "⮩ វីដេអូ",
-
-                callback_data:
-                  makeCallback(
-                    "tt_video",
-                    text
-                  )
-              },
-
-              {
-                text: "⮩ សំឡេង",
-
-                callback_data:
-                  makeCallback(
-                    "tt_audio",
-                    text
-                  )
-              },
-
-              {
-                text: "⮩ រូបភាព",
-
-                callback_data:
-                  makeCallback(
-                    "tt_image",
-                    text
-                  )
-              }
-            ]]
-          }
-        };
-
         return bot.sendMessage(
+
           chatId,
 
           `⚑ *TikTok Downloader*\n\nChoose format ⮯`,
 
-          ttOpts
+          {
+            parse_mode: "Markdown",
+
+            reply_markup: {
+
+              inline_keyboard: [[
+
+                {
+                  text: "⮩ វីដេអូ",
+                  callback_data:
+                    makeCallback(
+                      "tt_video",
+                      text
+                    )
+                },
+
+                {
+                  text: "⮩ សំឡេង",
+                  callback_data:
+                    makeCallback(
+                      "tt_audio",
+                      text
+                    )
+                },
+
+                {
+                  text: "⮩ រូបភាព",
+                  callback_data:
+                    makeCallback(
+                      "tt_image",
+                      text
+                    )
+                }
+
+              ]]
+
+            }
+
+          }
+
         );
 
       }
@@ -493,31 +510,36 @@ bot.on(
         text.includes("pin.it")
       ) {
 
-        const pinOpts = {
-          parse_mode: "Markdown",
-
-          reply_markup: {
-            inline_keyboard: [[
-              {
-                text:
-                  "⮩ ទាញយករូបភាព",
-
-                callback_data:
-                  makeCallback(
-                    "pin_image",
-                    text
-                  )
-              }
-            ]]
-          }
-        };
-
         return bot.sendMessage(
+
           chatId,
 
           `⚑ *Pinterest Downloader*\n\nChoose format ⮯`,
 
-          pinOpts
+          {
+            parse_mode: "Markdown",
+
+            reply_markup: {
+
+              inline_keyboard: [[
+
+                {
+                  text:
+                    "⮩ ទាញយករូបភាព",
+
+                  callback_data:
+                    makeCallback(
+                      "pin_image",
+                      text
+                    )
+                }
+
+              ]]
+
+            }
+
+          }
+
         );
 
       }
@@ -562,7 +584,7 @@ bot.on(
 
 /*
 ========================================
-BUTTON HANDLER
+CALLBACK QUERY
 ========================================
 */
 
@@ -575,39 +597,27 @@ bot.on(
 
       if (
         !query ||
-        !query.data ||
-        !query.message
+        !query.data
       ) return;
 
       await bot.answerCallbackQuery(
         query.id,
         {
-          text: "Processing...",
-          show_alert: false
+          text: "Processing..."
         }
       );
 
       const chatId =
         query.message.chat.id;
 
-      const msgId =
-        query.message.message_id;
-
-      await bot.editMessageReplyMarkup(
-        { inline_keyboard: [] },
-
-        {
-          chat_id: chatId,
-          message_id: msgId
-        }
-
-      ).catch(() => {});
-
       const data =
         query.data.split("|");
 
-      const action = data[0];
-      const key = data[1];
+      const action =
+        data[0];
+
+      const key =
+        data[1];
 
       let url = key;
 
@@ -624,65 +634,68 @@ bot.on(
 
       }
 
-      /*
-      ========================================
-      ACTIONS
-      ========================================
-      */
-
-      if (action === "yt_mp4") {
+      if (
+        action === "yt_mp4"
+      ) {
         return downloadYouTubeVideo(
           chatId,
           url
         );
       }
 
-      if (action === "yt_mp3") {
+      if (
+        action === "yt_mp3"
+      ) {
         return downloadYouTubeAudio(
           chatId,
           url
         );
       }
 
-      if (action === "yt_thumb") {
+      if (
+        action === "yt_thumb"
+      ) {
         return downloadYouTubeThumbnail(
           chatId,
           url
         );
       }
 
-      if (action === "tt_video") {
+      if (
+        action === "tt_video"
+      ) {
         return downloadTikTokVideo(
           chatId,
           url
         );
       }
 
-      if (action === "tt_audio") {
+      if (
+        action === "tt_audio"
+      ) {
         return downloadTikTokAudio(
           chatId,
           url
         );
       }
 
-      if (action === "tt_image") {
+      if (
+        action === "tt_image"
+      ) {
         return downloadTikTokImage(
           chatId,
           url
         );
       }
 
-      if (action === "pin_image") {
+      if (
+        action === "pin_image"
+      ) {
         return downloadPinterest(
           chatId,
           url
         );
       }
-
-      await bot.sendMessage(
-        chatId,
-        "✘ Unknown action"
-      );
 
     } catch (err) {
 
@@ -692,78 +705,6 @@ bot.on(
 
   }
 );
-
-/*
-========================================
-HELPERS
-========================================
-*/
-
-function findDownloadedFile(
-  prefix
-) {
-
-  const files =
-    fs.readdirSync(
-      DOWNLOAD_DIR
-    );
-
-  const matched =
-    files.find((name) =>
-      name.startsWith(
-        `${prefix}.`
-      )
-    );
-
-  return matched
-    ? path.join(
-        DOWNLOAD_DIR,
-        matched
-      )
-    : null;
-
-}
-
-function cleanupDownloadedFiles(
-  prefix
-) {
-
-  const files =
-    fs.readdirSync(
-      DOWNLOAD_DIR
-    );
-
-  files.forEach((name) => {
-
-    if (
-      name.startsWith(
-        `${prefix}.`
-      )
-    ) {
-
-      try {
-
-        fs.unlinkSync(
-          path.join(
-            DOWNLOAD_DIR,
-            name
-          )
-        );
-
-      } catch (e) {
-
-        console.log(
-          "cleanup failed",
-          e
-        );
-
-      }
-
-    }
-
-  });
-
-}
 
 /*
 ========================================
@@ -788,23 +729,47 @@ async function downloadYouTubeVideo(
   const outputTemplate =
     path.join(
       DOWNLOAD_DIR,
-      `${filePrefix}.%(ext)s`
+      `${filePrefix}.mp4`
     );
 
   const args = [
+
     "-f",
-    "bv*[height<=720]+ba/b[height<=720]",
-    "--merge-output-format",
-    "mp4",
+
+    "best[ext=mp4][height<=720]/best[height<=720]",
+
+    "--no-playlist",
+
     "--restrict-filenames",
+
+    "--socket-timeout",
+    "30",
+
+    "--retries",
+    "10",
+
+    "--fragment-retries",
+    "10",
+
     "-o",
     outputTemplate,
+
     url
   ];
 
   execFile(
+
     YTDLP_PATH,
+
     args,
+
+    {
+      timeout:
+        1000 * 60 * 5,
+
+      maxBuffer:
+        1024 * 1024 * 20
+    },
 
     async (
       err,
@@ -812,30 +777,33 @@ async function downloadYouTubeVideo(
       stderr
     ) => {
 
+      console.log(stdout);
+      console.log(stderr);
+
       const outputFile =
-        findDownloadedFile(
-          filePrefix
-        );
+        fs.existsSync(
+          outputTemplate
+        )
+          ? outputTemplate
+          : null;
 
       if (
         err ||
         !outputFile
       ) {
 
-        console.log(
-          "yt-dlp video error:",
-          err || "no output file",
-          stderr || stdout
-        );
+        console.log(err);
 
         await bot.sendMessage(
           chatId,
           "✘ Video failed"
         );
 
-        cleanupDownloadedFiles(
-          filePrefix
-        );
+        try {
+          fs.unlinkSync(
+            outputTemplate
+          );
+        } catch {}
 
         bot.deleteMessage(
           chatId,
@@ -860,7 +828,7 @@ async function downloadYouTubeVideo(
 
           await bot.sendMessage(
             chatId,
-            "✘ Video too large for Telegram"
+            "✘ Video too large"
           );
 
         } else {
@@ -870,7 +838,8 @@ async function downloadYouTubeVideo(
             outputFile,
             {
               caption:
-                "✓ YouTube Video"
+                "✓ YouTube Video",
+              supports_streaming: true
             }
           );
 
@@ -878,21 +847,20 @@ async function downloadYouTubeVideo(
 
       } catch (e) {
 
-        console.log(
-          "sendVideo error:",
-          e
-        );
+        console.log(e);
 
         await bot.sendMessage(
           chatId,
-          "✘ Video upload failed"
+          "✘ Upload failed"
         );
 
       }
 
-      cleanupDownloadedFiles(
-        filePrefix
-      );
+      try {
+        fs.unlinkSync(
+          outputFile
+        );
+      } catch {}
 
       bot.deleteMessage(
         chatId,
@@ -931,17 +899,43 @@ async function downloadYouTubeAudio(
     );
 
   const args = [
+
     "-f",
+
     "bestaudio[ext=m4a]/bestaudio",
+
+    "--no-playlist",
+
     "--restrict-filenames",
+
+    "--socket-timeout",
+    "30",
+
+    "--retries",
+    "10",
+
+    "--fragment-retries",
+    "10",
+
     "-o",
     outputTemplate,
+
     url
   ];
 
   execFile(
+
     YTDLP_PATH,
+
     args,
+
+    {
+      timeout:
+        1000 * 60 * 5,
+
+      maxBuffer:
+        1024 * 1024 * 20
+    },
 
     async (
       err,
@@ -949,30 +943,33 @@ async function downloadYouTubeAudio(
       stderr
     ) => {
 
+      console.log(stdout);
+      console.log(stderr);
+
       const outputFile =
-        findDownloadedFile(
-          filePrefix
-        );
+        fs.existsSync(
+          outputTemplate
+        )
+          ? outputTemplate
+          : null;
 
       if (
         err ||
         !outputFile
       ) {
 
-        console.log(
-          "yt-dlp audio error:",
-          err || "no output file",
-          stderr || stdout
-        );
+        console.log(err);
 
         await bot.sendMessage(
           chatId,
           "✘ Audio failed"
         );
 
-        cleanupDownloadedFiles(
-          filePrefix
-        );
+        try {
+          fs.unlinkSync(
+            outputTemplate
+          );
+        } catch {}
 
         bot.deleteMessage(
           chatId,
@@ -997,7 +994,7 @@ async function downloadYouTubeAudio(
 
           await bot.sendMessage(
             chatId,
-            "✘ Audio too large for Telegram"
+            "✘ Audio too large"
           );
 
         } else {
@@ -1015,21 +1012,20 @@ async function downloadYouTubeAudio(
 
       } catch (e) {
 
-        console.log(
-          "sendAudio error:",
-          e
-        );
+        console.log(e);
 
         await bot.sendMessage(
           chatId,
-          "✘ Audio upload failed"
+          "✘ Upload failed"
         );
 
       }
 
-      cleanupDownloadedFiles(
-        filePrefix
-      );
+      try {
+        fs.unlinkSync(
+          outputFile
+        );
+      } catch {}
 
       bot.deleteMessage(
         chatId,
@@ -1059,6 +1055,7 @@ async function downloadYouTubeThumbnail(
     );
 
   exec(
+
     `${YTDLP_PATH} --get-thumbnail "${url}"`,
 
     async (
@@ -1068,17 +1065,10 @@ async function downloadYouTubeThumbnail(
 
       if (err) {
 
-        console.log(err);
-
         await bot.sendMessage(
           chatId,
           "✘ Thumbnail failed"
         );
-
-        bot.deleteMessage(
-          chatId,
-          wait.message_id
-        ).catch(() => {});
 
         return;
 
@@ -1341,126 +1331,22 @@ async function spotifyInfo(
 
   try {
 
-    const normalizedUrl =
-      normalizeSpotifyUrl(
-        url
-      );
-
     const api =
-      `https://open.spotify.com/oembed?url=${encodeURIComponent(normalizedUrl)}`;
+      `https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`;
 
-    let { data } =
-      await axios
-        .get(api)
-        .catch(() => ({
-          data: null
-        }));
-
-    let thumb =
-      data &&
-      data.thumbnail_url
-        ? data.thumbnail_url
-        : null;
-
-    let title =
-      data &&
-      data.title
-        ? data.title
-        : null;
-
-    let author =
-      data &&
-      data.author_name
-        ? data.author_name
-        : null;
-
-    if (!thumb || !title) {
-
-      try {
-
-        const page =
-          await axios.get(
-            normalizedUrl
-          );
-
-        const html =
-          page.data;
-
-        const imgMatch =
-          html.match(
-            /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i
-          ) ||
-          html.match(
-            /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i
-          );
-
-        const titleMatch =
-          html.match(
-            /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i
-          ) ||
-          html.match(
-            /<meta[^>]+name=["']twitter:title["'][^>]+content=["']([^"']+)["']/i
-          );
-
-        const authorMatch =
-          html.match(
-            /<meta[^>]+name=["']author["'][^>]+content=["']([^"']+)["']/i
-          ) ||
-          html.match(
-            /<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']+)["']/i
-          );
-
-        if (imgMatch) {
-          thumb =
-            thumb ||
-            imgMatch[1];
-        }
-
-        if (titleMatch) {
-          title =
-            title ||
-            titleMatch[1];
-        }
-
-        if (authorMatch) {
-          author =
-            author ||
-            authorMatch[1];
-        }
-
-      } catch (pageErr) {
-
-        console.log(
-          "spotify page scrape failed",
-          pageErr.message ||
-          pageErr
-        );
-
-      }
-
-    }
-
-    if (!thumb) {
-
-      await bot.sendMessage(
-        chatId,
-        "✘ Spotify thumbnail unavailable"
-      );
-
-      return;
-
-    }
+    const { data } =
+      await axios.get(api);
 
     await bot.sendPhoto(
       chatId,
-      thumb,
+      data.thumbnail_url,
       {
         caption:
 `🎵 Spotify Track
 
-📌 ${title || "Unknown"}
+📌 ${data.title}
 
-👤 ${author || "Unknown"}`
+👤 ${data.author_name}`
       }
     );
 
@@ -1468,56 +1354,17 @@ async function spotifyInfo(
 
     console.log(err);
 
-    await bot.sendMessage(
+    bot.sendMessage(
       chatId,
       "✘ Spotify failed"
     );
 
-  } finally {
-
-    bot.deleteMessage(
-      chatId,
-      wait.message_id
-    ).catch(() => {});
-
   }
 
-}
-
-function normalizeSpotifyUrl(
-  url
-) {
-
-  if (!url) return url;
-
-  if (
-    url.startsWith("spotify:")
-  ) {
-
-    const parts =
-      url.split(":");
-
-    if (parts.length >= 3) {
-
-      return `https://open.spotify.com/${parts[1]}/${parts[2]}`;
-
-    }
-
-  }
-
-  if (
-    url.startsWith("http")
-  ) {
-    return url;
-  }
-
-  if (
-    url.startsWith("www.")
-  ) {
-    return `https://${url}`;
-  }
-
-  return url;
+  bot.deleteMessage(
+    chatId,
+    wait.message_id
+  ).catch(() => {});
 
 }
 
@@ -1534,10 +1381,6 @@ START BOT
 
   if (!ok) {
 
-    console.log(
-      "❌ Bot stopped because yt-dlp missing"
-    );
-
     process.exit(1);
 
   }
@@ -1547,15 +1390,22 @@ START BOT
   try {
 
     await bot.startPolling({
+
       params: {
+
         timeout: 30,
+
         limit: 100,
+
         allowed_updates: [
           "message",
           "callback_query"
         ],
+
         drop_pending_updates: true
+
       }
+
     });
 
     console.log(
@@ -1564,10 +1414,7 @@ START BOT
 
   } catch (e) {
 
-    console.error(
-      "❌ startPolling failed",
-      e
-    );
+    console.log(e);
 
   }
 
