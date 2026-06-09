@@ -1185,37 +1185,27 @@ bot.on(
 
 /*
 ========================================
-COBALT HELPER — bypass YouTube IP block, no cookies needed
+RAPIDAPI HELPER — YouTube download via RapidAPI
+No IP block, no cookies needed, free 500/day
+Set RAPIDAPI_KEY in Render environment variables
 ========================================
 */
 
-async function cobaltGetUrl(url, mode, videoQuality) {
-  videoQuality = videoQuality || "720";
-  const payload = {
-    url: url,
-    downloadMode: mode,
-    videoQuality: videoQuality,
-    audioFormat: "mp3",
-    audioBitrate: "192",
-    filenameStyle: "basic",
-    disableMetadata: false
-  };
-  const resp = await axios.post("https://api.cobalt.tools/", payload, {
-    headers: { "Accept": "application/json", "Content-Type": "application/json" },
-    timeout: 30000
-  });
-  const data = resp.data;
-  if (data.status === "error") throw new Error(data.error && data.error.code ? data.error.code : "cobalt error");
-  if (data.status === "tunnel" || data.status === "redirect") return data.url;
-  if (data.status === "picker" && data.picker && data.picker.length) return data.picker[0].url;
-  throw new Error("No download URL from cobalt");
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
+
+// Extract YouTube video ID from URL
+function extractYtId(url) {
+  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|shorts\/|embed\/))([\w-]{11})/);
+  return match ? match[1] : null;
 }
 
-async function cobaltDownloadToFile(streamUrl, destPath) {
+// Download stream URL to file
+async function downloadStreamToFile(streamUrl, destPath, extraHeaders) {
+  extraHeaders = extraHeaders || {};
   const response = await axios.get(streamUrl, {
     responseType: "stream",
     timeout: 1000 * 60 * 8,
-    headers: { "User-Agent": "Mozilla/5.0" }
+    headers: Object.assign({ "User-Agent": "Mozilla/5.0" }, extraHeaders)
   });
   return new Promise(function(resolve, reject) {
     const writer = fs.createWriteStream(destPath);
@@ -1227,7 +1217,7 @@ async function cobaltDownloadToFile(streamUrl, destPath) {
 
 /*
 ========================================
-YOUTUBE VIDEO — via cobalt.tools (no cookies needed)
+YOUTUBE VIDEO — via RapidAPI (no IP block)
 ========================================
 */
 
@@ -1237,33 +1227,42 @@ async function downloadYouTubeVideo(chatId, url, userId, username) {
 
   try {
 
-    const streamUrl = await cobaltGetUrl(url, "auto", "720");
-    const filePrefix = Date.now().toString();
-    const outputFile = path.join(DOWNLOAD_DIR, filePrefix + ".mp4");
+    if (!RAPIDAPI_KEY) throw new Error("RAPIDAPI_KEY not set");
 
-    await cobaltDownloadToFile(streamUrl, outputFile);
+    const videoId = extractYtId(url);
+    if (!videoId) throw new Error("Invalid YouTube URL");
+
+    // Use youtube-mp36 API on RapidAPI (returns mp4 link)
+    const { data } = await axios.get("https://youtube-mp36.p.rapidapi.com/dl", {
+      params: { id: videoId },
+      headers: {
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": "youtube-mp36.p.rapidapi.com"
+      },
+      timeout: 30000
+    });
+
+    console.log("[YT_MP4 rapidapi]", JSON.stringify(data));
+
+    if (data.status !== "ok" || !data.link) throw new Error(data.msg || "No link returned");
+
+    const filePrefix = Date.now().toString();
+    const outputFile = path.join(DOWNLOAD_DIR, filePrefix + ".mp3");
+
+    await downloadStreamToFile(data.link, outputFile);
 
     const stat = fs.statSync(outputFile);
 
     if (stat.size > 49 * 1024 * 1024) {
 
-      addHistory(userId, username, {
-        platform: "youtube", format: "mp4", url, status: "fail"
-      });
-
-      await bot.sendMessage(chatId, "✘ Video too large (>50MB). Try a shorter video.");
+      addHistory(userId, username, { platform: "youtube", format: "mp4", url, status: "fail" });
+      await bot.sendMessage(chatId, "✘ File too large (>50MB). Try a shorter video.");
 
     } else {
 
-      await bot.sendVideo(
-        chatId,
-        outputFile,
-        { caption: "✓ YouTube Video", supports_streaming: true }
-      );
+      await bot.sendAudio(chatId, outputFile, { caption: "✓ YouTube Audio/Video" });
 
-      addHistory(userId, username, {
-        platform: "youtube", format: "mp4", url, status: "ok"
-      });
+      addHistory(userId, username, { platform: "youtube", format: "mp4", url, status: "ok" });
 
     }
 
@@ -1272,11 +1271,7 @@ async function downloadYouTubeVideo(chatId, url, userId, username) {
   } catch (err) {
 
     console.log("[YT_MP4 err]", err.message || err);
-
-    addHistory(userId, username, {
-      platform: "youtube", format: "mp4", url, status: "fail"
-    });
-
+    addHistory(userId, username, { platform: "youtube", format: "mp4", url, status: "fail" });
     await bot.sendMessage(chatId, "✘ Video download failed.");
 
   }
@@ -1287,7 +1282,7 @@ async function downloadYouTubeVideo(chatId, url, userId, username) {
 
 /*
 ========================================
-YOUTUBE AUDIO — via cobalt.tools (no cookies needed)
+YOUTUBE AUDIO — via RapidAPI (no IP block)
 ========================================
 */
 
@@ -1297,33 +1292,41 @@ async function downloadYouTubeAudio(chatId, url, userId, username) {
 
   try {
 
-    const streamUrl = await cobaltGetUrl(url, "audio");
+    if (!RAPIDAPI_KEY) throw new Error("RAPIDAPI_KEY not set");
+
+    const videoId = extractYtId(url);
+    if (!videoId) throw new Error("Invalid YouTube URL");
+
+    const { data } = await axios.get("https://youtube-mp36.p.rapidapi.com/dl", {
+      params: { id: videoId },
+      headers: {
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": "youtube-mp36.p.rapidapi.com"
+      },
+      timeout: 30000
+    });
+
+    console.log("[YT_MP3 rapidapi]", JSON.stringify(data));
+
+    if (data.status !== "ok" || !data.link) throw new Error(data.msg || "No link returned");
+
     const filePrefix = Date.now().toString();
     const outputFile = path.join(DOWNLOAD_DIR, filePrefix + ".mp3");
 
-    await cobaltDownloadToFile(streamUrl, outputFile);
+    await downloadStreamToFile(data.link, outputFile);
 
     const stat = fs.statSync(outputFile);
 
     if (stat.size > 49 * 1024 * 1024) {
 
-      addHistory(userId, username, {
-        platform: "youtube", format: "mp3", url, status: "fail"
-      });
-
+      addHistory(userId, username, { platform: "youtube", format: "mp3", url, status: "fail" });
       await bot.sendMessage(chatId, "✘ Audio too large (>50MB)");
 
     } else {
 
-      await bot.sendAudio(
-        chatId,
-        outputFile,
-        { caption: "✓ YouTube Audio" }
-      );
+      await bot.sendAudio(chatId, outputFile, { caption: "✓ YouTube Audio" });
 
-      addHistory(userId, username, {
-        platform: "youtube", format: "mp3", url, status: "ok"
-      });
+      addHistory(userId, username, { platform: "youtube", format: "mp3", url, status: "ok" });
 
     }
 
@@ -1332,11 +1335,7 @@ async function downloadYouTubeAudio(chatId, url, userId, username) {
   } catch (err) {
 
     console.log("[YT_MP3 err]", err.message || err);
-
-    addHistory(userId, username, {
-      platform: "youtube", format: "mp3", url, status: "fail"
-    });
-
+    addHistory(userId, username, { platform: "youtube", format: "mp3", url, status: "fail" });
     await bot.sendMessage(chatId, "✘ Audio download failed.");
 
   }
@@ -1621,100 +1620,76 @@ async function spotifyInfo(chatId, url, userId, username) {
 
     const wait2 = await bot.sendMessage(chatId, "⏳ Downloading audio...");
 
-    const args = [
-      "--no-playlist",
-      "--restrict-filenames",
-      "--socket-timeout", "60",
-      "--retries", "10",
-      "--fragment-retries", "10",
-      "--no-check-certificates",
-      "--extractor-args", "youtube:player_client=android,web",
-      ...(HAS_COOKIES ? ["--cookies", COOKIES_PATH] : []),
-      "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
-      "--extract-audio",
-      "--audio-format", "mp3",
-      "--audio-quality", "192K",
-      "-o", outputTemplate,
-      `ytsearch1:${searchQuery}`
-    ];
-
-    execFile(
-      YTDLP_PATH,
-      args,
-      { timeout: 1000 * 60 * 8, maxBuffer: 1024 * 1024 * 50 },
-
-      async (err, stdout, stderr) => {
-
-        console.log("[SPOTIFY stdout]", stdout);
-        console.log("[SPOTIFY stderr]", stderr);
-
-        let outputFile = null;
-        try {
-          const files = fs.readdirSync(DOWNLOAD_DIR).filter(f => f.startsWith(filePrefix));
-          if (files.length) outputFile = path.join(DOWNLOAD_DIR, files[0]);
-        } catch {}
-
-        if (err || !outputFile) {
-
-          console.log("[SPOTIFY err]", err);
-
-          addHistory(userId, username, {
-            platform: "spotify", format: "audio", url, status: "fail"
-          });
-
-          await bot.sendMessage(chatId, `✘ Could not download audio for:\n*${trackTitle}*`, { parse_mode: "Markdown" });
-          bot.deleteMessage(chatId, wait2.message_id).catch(() => {});
-          return;
-
-        }
-
-        try {
-
-          const stat = fs.statSync(outputFile);
-
-          if (stat.size > 49 * 1024 * 1024) {
-
-            addHistory(userId, username, {
-              platform: "spotify", format: "audio", url, status: "fail"
-            });
-
-            await bot.sendMessage(chatId, "✘ Audio too large (>50MB)");
-
-          } else {
-
-            await bot.sendAudio(
-              chatId,
-              outputFile,
-              {
-                caption: `🎵 ${trackTitle}\n👤 ${artistName}`,
-                title: trackTitle,
-                performer: artistName
-              }
-            );
-
-            addHistory(userId, username, {
-              platform: "spotify", format: "audio", url, status: "ok"
-            });
-
-          }
-
-        } catch (e) {
-
-          console.log(e);
-
-          addHistory(userId, username, {
-            platform: "spotify", format: "audio", url, status: "fail"
-          });
-
-          await bot.sendMessage(chatId, "✘ Upload failed");
-
-        }
-
-        try { fs.unlinkSync(outputFile); } catch {}
-        bot.deleteMessage(chatId, wait2.message_id).catch(() => {});
-
+    // Search YouTube for the track via RapidAPI search endpoint
+    let searchVideoId = null;
+    try {
+      const searchResp = await axios.get("https://youtube-search-and-download.p.rapidapi.com/search", {
+        params: { query: searchQuery, type: "v", sort: "r" },
+        headers: {
+          "x-rapidapi-key": RAPIDAPI_KEY,
+          "x-rapidapi-host": "youtube-search-and-download.p.rapidapi.com"
+        },
+        timeout: 15000
+      });
+      const items = searchResp.data && searchResp.data.contents;
+      if (items && items.length > 0) {
+        searchVideoId = items[0].video && items[0].video.videoId;
       }
-    );
+    } catch (se) {
+      console.log("[SPOTIFY search err]", se.message);
+    }
+
+    if (!searchVideoId) {
+      addHistory(userId, username, { platform: "spotify", format: "audio", url, status: "fail" });
+      await bot.sendMessage(chatId, `✘ Could not find audio for: *${trackTitle}*`, { parse_mode: "Markdown" });
+      bot.deleteMessage(chatId, wait2.message_id).catch(() => {});
+      return;
+    }
+
+    // Download MP3 via RapidAPI
+    const dlResp = await axios.get("https://youtube-mp36.p.rapidapi.com/dl", {
+      params: { id: searchVideoId },
+      headers: {
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": "youtube-mp36.p.rapidapi.com"
+      },
+      timeout: 30000
+    });
+
+    const dlData = dlResp.data;
+    console.log("[SPOTIFY rapidapi]", JSON.stringify(dlData));
+
+    if (dlData.status !== "ok" || !dlData.link) {
+      addHistory(userId, username, { platform: "spotify", format: "audio", url, status: "fail" });
+      await bot.sendMessage(chatId, `✘ Could not download audio for: *${trackTitle}*`, { parse_mode: "Markdown" });
+      bot.deleteMessage(chatId, wait2.message_id).catch(() => {});
+      return;
+    }
+
+    const outputFile = path.join(DOWNLOAD_DIR, filePrefix + ".mp3");
+    await downloadStreamToFile(dlData.link, outputFile);
+
+    const stat = fs.statSync(outputFile);
+
+    if (stat.size > 49 * 1024 * 1024) {
+
+      addHistory(userId, username, { platform: "spotify", format: "audio", url, status: "fail" });
+      await bot.sendMessage(chatId, "✘ Audio too large (>50MB)");
+
+    } else {
+
+      await bot.sendAudio(chatId, outputFile, {
+        caption: `🎵 ${trackTitle}\n👤 ${artistName}`,
+        title: trackTitle,
+        performer: artistName
+      });
+
+      addHistory(userId, username, { platform: "spotify", format: "audio", url, status: "ok" });
+
+    }
+
+    try { fs.unlinkSync(outputFile); } catch {}
+    bot.deleteMessage(chatId, wait2.message_id).catch(() => {});
 
   } catch (err) {
 
