@@ -876,8 +876,9 @@ const BUTTONS = {
         url: "https://tools-amertak.vercel.app"
       },
       {
-        text: "Dashboard",
-        url: `${BASE_URL}/dashboard`
+        text: "Dashboard", web_app: {
+          url: `${BASE_URL}/dashboard?uid=${uid}`
+        }
       }
     ]]
   }
@@ -893,7 +894,7 @@ bot.onText(
   /\/start/,
 
   async (msg) => {
-
+    const uid = msg.from.id;
     bot.sendMessage(
 
       msg.chat.id,
@@ -917,15 +918,11 @@ bot.onText(
 ✦ Send link to bot
 ✦ Choose format
 
-⚑ *Owner: @Amertak_Network*`,
-
-      {
-        parse_mode: "Markdown",
-        ...BUTTONS
-      }
+⚑ Owner: [Thavrath Amertak](@Amertak_Network)`, {
+        parse_mode: "Markdown"
+      }, BUTTONS
 
     );
-
   }
 );
 
