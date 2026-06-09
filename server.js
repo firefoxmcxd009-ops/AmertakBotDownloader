@@ -287,18 +287,18 @@ async function downloadYouTubeVideo(chatId, url) {
   const outputTemplate = path.join(DOWNLOAD_DIR, `${filePrefix}.%(ext)s`);
   const args = [
   "-f",
-  "b[filesize<50M]/bv*[height<=360]+ba",
-  "--merge-output-format",
-  "mp4",
+  "18",
+  "--max-filesize",
+  "50M",
   "--force-ipv4",
   "--no-playlist",
   "--no-warnings",
   "--no-check-certificates",
-    "--restrict-filenames",
-    "-o",
-    outputTemplate,
-    url
-  ];
+  "--restrict-filenames",
+  "-o",
+  outputTemplate,
+  url
+];
 
   execFile(
   YTDLP_PATH,
@@ -339,16 +339,20 @@ async function downloadYouTubeAudio(chatId, url) {
   const filePrefix = Date.now().toString();
   const outputTemplate = path.join(DOWNLOAD_DIR, `${filePrefix}.%(ext)s`);
   const args = [
-    "-f",
-    "bestaudio[abr<=128]/bestaudio",
-    "--force-ipv4",
-    "--no-playlist",
-    "--no-warnings",
-    "--restrict-filenames",
-    "-o",
-    outputTemplate,
-    url
-  ];
+  "-f",
+  "bestaudio",
+  "-x",
+  "--audio-format",
+  "mp3",
+  "--force-ipv4",
+  "--no-playlist",
+  "--no-warnings",
+  "--no-check-certificates",
+  "--restrict-filenames",
+  "-o",
+  outputTemplate,
+  url
+];
 
   execFile(
   YTDLP_PATH,
