@@ -877,7 +877,7 @@ const BUTTONS = {
       },
       {
         text: "Dashboard", web_app: {
-          url: `${BASE_URL}/dashboard?uid=${userid}`
+          url: `${BASE_URL}/dashboard?uid=userid`
         }
       }
     ]]
