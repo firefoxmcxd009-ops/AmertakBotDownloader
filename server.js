@@ -503,6 +503,17 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 let allRecords = [];
 let currentFilter = 'all';
 
+// Auto-login if ?uid= is in the URL
+(function autoLogin() {
+  const params = new URLSearchParams(window.location.search);
+  const uid = params.get('uid');
+  if (uid) {
+    document.getElementById('uid-input').value = uid;
+    // Slight delay so DOM is ready
+    setTimeout(() => doLogin(), 100);
+  }
+})();
+
 function doLogin() {
   const uid = document.getElementById('uid-input').value.trim();
   if (!uid) return;
@@ -911,14 +922,15 @@ bot.onText(
 */
 
 bot.onText(/\/dashboard/, async (msg) => {
+  const uid = msg.from.id;
   bot.sendMessage(
     msg.chat.id,
-    `📊 *Dashboard*\n\nView your download history:\n${BASE_URL}/dashboard\n\nYour User ID: \`${msg.from.id}\``,
+    `📊 *Dashboard*\n\nView your download history:\n${BASE_URL}/dashboard?uid=${uid}\n\nYour User ID: \`${uid}\``,
     {
       parse_mode: "Markdown",
       reply_markup: {
         inline_keyboard: [[
-          { text: "Open Dashboard", url: `${BASE_URL}/dashboard` }
+          { text: "Open Dashboard", url: `${BASE_URL}/dashboard?uid=${uid}` }
         ]]
       }
     }
@@ -1173,7 +1185,7 @@ async function downloadYouTubeVideo(chatId, url, userId, username) {
   const expectedWebm = path.join(DOWNLOAD_DIR, `${filePrefix}.webm`);
   const expectedMkv = path.join(DOWNLOAD_DIR, `${filePrefix}.mkv`);
 
-  // Fixed: use format string that actually works on modern yt-dlp
+  // Use android player client to bypass YouTube bot-detection (HTTP 429 / sign-in wall)
   const args = [
     "--no-playlist",
     "--restrict-filenames",
@@ -1181,6 +1193,7 @@ async function downloadYouTubeVideo(chatId, url, userId, username) {
     "--retries", "10",
     "--fragment-retries", "10",
     "--no-check-certificates",
+    "--extractor-args", "youtube:player_client=android,web",
     "-f", "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]/best",
     "--merge-output-format", "mp4",
     "-o", outputTemplate,
@@ -1296,6 +1309,7 @@ async function downloadYouTubeAudio(chatId, url, userId, username) {
     "--retries", "10",
     "--fragment-retries", "10",
     "--no-check-certificates",
+    "--extractor-args", "youtube:player_client=android,web",
     "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
     "--extract-audio",
     "--audio-format", "mp3",
@@ -1616,29 +1630,135 @@ SPOTIFY
 
 async function spotifyInfo(chatId, url, userId, username) {
 
-  const wait = await bot.sendMessage(chatId, "⏳ Fetching Spotify...");
+  const wait = await bot.sendMessage(chatId, "⏳ Fetching Spotify track...");
 
   try {
 
+    // Step 1: get track metadata from Spotify oEmbed
     const api = `https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`;
     const { data } = await axios.get(api);
 
+    const trackTitle = data.title || "Unknown Track";
+    const artistName = data.author_name || "";
+    const thumbUrl = data.thumbnail_url;
+
+    // Step 2: send info + thumbnail first
     await bot.sendPhoto(
       chatId,
-      data.thumbnail_url,
+      thumbUrl,
       {
         caption:
 `🎵 Spotify Track
 
-📌 ${data.title}
+📌 ${trackTitle}
+👤 ${artistName}
 
-👤 ${data.author_name}`
+⏳ Searching audio on YouTube...`
       }
     );
 
-    addHistory(userId, username, {
-      platform: "spotify", format: "audio", url, status: "ok"
-    });
+    bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+
+    // Step 3: search YouTube for the track and download audio
+    const searchQuery = `${trackTitle} ${artistName} official audio`;
+    const filePrefix = Date.now().toString();
+    const outputTemplate = path.join(DOWNLOAD_DIR, `${filePrefix}.%(ext)s`);
+
+    const wait2 = await bot.sendMessage(chatId, "⏳ Downloading audio...");
+
+    const args = [
+      "--no-playlist",
+      "--restrict-filenames",
+      "--socket-timeout", "60",
+      "--retries", "10",
+      "--fragment-retries", "10",
+      "--no-check-certificates",
+      "--extractor-args", "youtube:player_client=android,web",
+      "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
+      "--extract-audio",
+      "--audio-format", "mp3",
+      "--audio-quality", "192K",
+      "-o", outputTemplate,
+      `ytsearch1:${searchQuery}`
+    ];
+
+    execFile(
+      YTDLP_PATH,
+      args,
+      { timeout: 1000 * 60 * 8, maxBuffer: 1024 * 1024 * 50 },
+
+      async (err, stdout, stderr) => {
+
+        console.log("[SPOTIFY stdout]", stdout);
+        console.log("[SPOTIFY stderr]", stderr);
+
+        let outputFile = null;
+        try {
+          const files = fs.readdirSync(DOWNLOAD_DIR).filter(f => f.startsWith(filePrefix));
+          if (files.length) outputFile = path.join(DOWNLOAD_DIR, files[0]);
+        } catch {}
+
+        if (err || !outputFile) {
+
+          console.log("[SPOTIFY err]", err);
+
+          addHistory(userId, username, {
+            platform: "spotify", format: "audio", url, status: "fail"
+          });
+
+          await bot.sendMessage(chatId, `✘ Could not download audio for:\n*${trackTitle}*`, { parse_mode: "Markdown" });
+          bot.deleteMessage(chatId, wait2.message_id).catch(() => {});
+          return;
+
+        }
+
+        try {
+
+          const stat = fs.statSync(outputFile);
+
+          if (stat.size > 49 * 1024 * 1024) {
+
+            addHistory(userId, username, {
+              platform: "spotify", format: "audio", url, status: "fail"
+            });
+
+            await bot.sendMessage(chatId, "✘ Audio too large (>50MB)");
+
+          } else {
+
+            await bot.sendAudio(
+              chatId,
+              outputFile,
+              {
+                caption: `🎵 ${trackTitle}\n👤 ${artistName}`,
+                title: trackTitle,
+                performer: artistName
+              }
+            );
+
+            addHistory(userId, username, {
+              platform: "spotify", format: "audio", url, status: "ok"
+            });
+
+          }
+
+        } catch (e) {
+
+          console.log(e);
+
+          addHistory(userId, username, {
+            platform: "spotify", format: "audio", url, status: "fail"
+          });
+
+          await bot.sendMessage(chatId, "✘ Upload failed");
+
+        }
+
+        try { fs.unlinkSync(outputFile); } catch {}
+        bot.deleteMessage(chatId, wait2.message_id).catch(() => {});
+
+      }
+    );
 
   } catch (err) {
 
@@ -1648,11 +1768,10 @@ async function spotifyInfo(chatId, url, userId, username) {
       platform: "spotify", format: "audio", url, status: "fail"
     });
 
-    bot.sendMessage(chatId, "✘ Spotify failed");
+    bot.sendMessage(chatId, "✘ Spotify failed — invalid link?");
+    bot.deleteMessage(chatId, wait.message_id).catch(() => {});
 
   }
-
-  bot.deleteMessage(chatId, wait.message_id).catch(() => {});
 
 }
 
