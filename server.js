@@ -919,8 +919,8 @@ bot.onText(
 ✦ Choose format
 
 ⚑ Owner: [Thavrath Amertak](https://t.me/Amertak_Network)`, {
-        parse_mode: "Markdown", BUTTONS
-      }
+        parse_mode: "Markdown"
+      }, BUTTONS
     );
   }
 );
