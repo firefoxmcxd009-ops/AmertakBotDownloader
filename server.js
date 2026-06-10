@@ -66,7 +66,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Amertak Bot Premium Dashboard</title>
+<title>AmertakBot Dashboard</title>
 <style>
  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -230,7 +230,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
 <nav>
  <div class="nav-logo"><span class="dot"></span>AMERTAK <span class="red-text">BOT</span></div>
- <span style="font-size:11px; color:var(--muted); font-family:var(--mono); text-transform:uppercase; letter-spacing:1px;">Premium Console</span>
+ <span style="font-size:11px; color:var(--muted); font-family:var(--mono); text-transform:uppercase; letter-spacing:1px;">User Data</span>
 </nav>
 
 <div id="login-view">
@@ -416,7 +416,7 @@ ROUTES
 */
 
 app.get("/", (req, res) => {
- res.send("Bot Running ✅ | <a href='/dashboard'>Premium Dashboard</a>");
+ res.send("Bot Running ✅ | <a href='/dashboard'>Dashboard</a>");
 });
 
 app.get("/dashboard", (req, res) => {
@@ -548,17 +548,17 @@ START COMMAND
 bot.onText(/\/start/, async (msg) => {
  bot.sendMessage(
    msg.chat.id,
-`⚑ *សូមស្វាគមន៏មកកាន់ Amertak Bot Downloader (Premium UI)*
+`⚑ *សូមស្វាគមន៏មកកាន់ Amertak Bot Downloader*
 
 ✱ Commands:
 ✦ /dashboard - បើកផ្ទាំងគ្រប់គ្រងប្រវត្តិ
 ✦ /clear - សម្អាតប្រវត្តិទាញយក
 
 ✱ Supported Platforms:
-✦ YouTube (វីដេអូ/សំឡេង/Thumbnail)
-✦ TikTok (វីដេអូគ្មានម៉ាក/រូបភាព/សំឡេង)
-✦ Pinterest (រូបភាព)
-✦ Spotify (ស្វែងរក និងទាញយកជា MP3)
+✦ [YouTube](youtube.com)
+✦ [TikTok](tiktok.com)
+✦ [Pinterest](Pinterest.com)
+✦ [Spotify](Spotify.com)
 
 ⚙️ _ផ្ញើលីងណាមួយមកកាន់ Bot ដើម្បីសាកល្បង!_`, {
      parse_mode: "Markdown"
