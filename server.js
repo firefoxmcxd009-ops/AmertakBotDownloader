@@ -1509,24 +1509,30 @@ START BOT
 */
 
 (async () => {
- const ok = await ensureYtDlp();
- if (!ok) {
-   console.log("⚠️ Processing standard startup despite check status...");
- }
 
- await clearTelegramWebhook();
+  const ok = await ensureYtDlp();
 
- try {
-   await bot.startPolling({
-     params: {
-       timeout: 30,
-       limit: 100,
-       allowed_updates: ["message", "callback_query"],
-       drop_pending_updates: true
-     }
-   });
-   console.log("✅ Bot polling started");
- } catch (err) {
-   console.log("startPolling error:", err.message || err);
- }
+  if (!ok) {
+    console.log("⚠️ yt-dlp check failed, but continuing startup...");
+  }
+
+  await clearTelegramWebhook();
+
+  try {
+
+    await bot.startPolling({
+      params: {
+        timeout: 30,
+        limit: 100,
+        allowed_updates: ["message", "callback_query"],
+        drop_pending_updates: true
+      }
+    });
+
+    console.log("✅ Bot polling started");
+
+  } catch (err) {
+    console.log("startPolling error:", err.message || err);
+  }
+
 })();
