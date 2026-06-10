@@ -933,12 +933,12 @@ bot.onText(/\/dashboard/, async (msg) => {
   const uid = msg.from.id;
   bot.sendMessage(
     msg.chat.id,
-    `📊 *Dashboard*\n\nView your download history:\n${BASE_URL}/dashboard?uid=${uid}\n\nYour User ID: \`${uid}\``,
+    `📊 *Dashboard*\n\nView your download history:\n[Click to open dashboard](${BASE_URL}/dashboard?uid=${uid})\n\nYour User ID: \`${uid}\``,
     {
       parse_mode: "Markdown",
       reply_markup: {
         inline_keyboard: [[
-          { text: "Open Dashboard", url: `${BASE_URL}/dashboard?uid=${uid}` }
+          { text: "Open Dashboard", web_app: { url: `${BASE_URL}/dashboard?uid=${uid}` } }
         ]]
       }
     }
