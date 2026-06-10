@@ -909,7 +909,7 @@ bot.onText(
 ✦ [YouTube](youtube.com)
 ✦ [TikTok](tiktok.com)
 ✦ [Pinterest](pinterest.com)
-✦ [Spotify](spotify.com)
+✦ [Spotify](spotify.com) (បច្ចុប្បន្នមិនទាន់ដំណើរការ)
 
 ✱ How to use
 
@@ -917,8 +917,8 @@ bot.onText(
 ✦ Choose format
 
 ⚑ Owner: [Thavrath Amertak](https://t.me/Amertak_Network)`, {
-        parse_mode: "Markdown"
-      }, BUTTONS
+        parse_mode: "Markdown", BUTTONS
+      }
     );
   }
 );
