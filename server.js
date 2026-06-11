@@ -57,11 +57,13 @@ app.use(express.json());
 
 /*
 ========================================
-DASHBOARD HTML (NEW GLASSMORPHISM & GLOWING RED UI)
+DASHBOARD HTML — served from /dashboard/index.html
 ========================================
 */
 
-const DASHBOARD_HTML = `<!DOCTYPE html>
+/* removed inline HTML — see dashboard/index.html */
+
+const _DASHBOARD_HTML_REMOVED = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
@@ -415,12 +417,16 @@ ROUTES
 ========================================
 */
 
+// Serve dashboard static files from /dashboard folder
+app.use("/dashboard", express.static(path.join(__dirname, "dashboard")));
+
 app.get("/", (req, res) => {
- res.send("Bot Running ✅ | <a href='/dashboard'>Dashboard</a>");
+  res.send("Bot Running ✅ | <a href='/dashboard'>Dashboard</a>");
 });
 
+// Fallback: /dashboard and /dashboard/ → serve index.html
 app.get("/dashboard", (req, res) => {
- res.send(DASHBOARD_HTML);
+  res.sendFile(path.join(__dirname, "dashboard", "index.html"));
 });
 
 app.get("/api/history/:userId", (req, res) => {
